@@ -19,7 +19,7 @@ import {
 const STORAGE_KEY = "mi-agenda-sanorganic-v2";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => toISO(new Date()); // fecha LOCAL, no UTC (evita el desfase de un día)
 const monthKey = (isoDate) => isoDate.slice(0, 7);
 const currentMonthKey = () => todayISO().slice(0, 7);
 
@@ -48,6 +48,20 @@ const startOfWeek = (isoDate) => {
   return d;
 };
 
+const habitWeekProgress = (h, today, weekStart) => {
+  let done = 0, elapsedRequired = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(weekStart, i);
+    const iso = toISO(d);
+    if (iso > today) continue;
+    if (h.targetDays.includes(d.getDay())) {
+      elapsedRequired++;
+      if ((h.log[iso] || 0) >= h.targetQty) done++;
+    }
+  }
+  return { done, required: elapsedRequired, pct: elapsedRequired ? done / elapsedRequired : 0 };
+};
+
 const addDays = (date, n) => {
   const d = new Date(date);
   d.setDate(d.getDate() + n);
@@ -57,6 +71,47 @@ const addDays = (date, n) => {
 const toISO = (d) => {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+};
+
+/* ---------- exportar archivos (CSV / ICS) ---------- */
+const downloadFile = (filename, content, mime) => {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+const toCSV = (rows) => {
+  if (!rows.length) return "";
+  const headers = Object.keys(rows[0]);
+  const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  return [headers.join(","), ...rows.map((r) => headers.map((h) => escape(r[h])).join(","))].join("\n");
+};
+
+const icsEscape = (s) => String(s || "").replace(/[\\;,]/g, (c) => "\\" + c).replace(/\n/g, "\\n");
+
+const buildICS = (events) => {
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//SAN-ORGANIC//Mi Agenda//ES"];
+  events.forEach((e) => {
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${e.id}@mi-agenda-sanorganic`,
+      `DTSTART:${e.dtstart}`,
+      e.dtend ? `DTEND:${e.dtend}` : "",
+      `SUMMARY:${icsEscape(e.title)}`,
+      "BEGIN:VALARM", "TRIGGER:-PT30M", "ACTION:DISPLAY", `DESCRIPTION:${icsEscape(e.title)}`, "END:VALARM",
+      "END:VEVENT"
+    );
+  });
+  lines.push("END:VCALENDAR");
+  return lines.filter(Boolean).join("\r\n");
+};
+
+const dateTimeToICS = (isoDate, time) => {
+  const [h, m] = (time || "09:00").split(":");
+  return `${isoDate.replace(/-/g, "")}T${h.padStart(2, "0")}${m.padStart(2, "0")}00`;
 };
 
 const defaultData = () => ({
@@ -244,13 +299,66 @@ const NAV = [
 
 /* ============================================================ */
 
+/* Temporizador Pomodoro vivo a nivel raíz: así sigue corriendo aunque cambies de pestaña */
+function usePomodoro() {
+  const WORK = 25 * 60, BREAK = 5 * 60;
+  const [secondsLeft, setSecondsLeft] = useState(WORK);
+  const [running, setRunning] = useState(false);
+  const [mode, setMode] = useState("work");
+  const [cycles, setCycles] = useState(0);
+  const modeRef = useRef(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => {
+      setSecondsLeft((s) => {
+        if (s <= 1) {
+          const current = modeRef.current;
+          const next = current === "work" ? "break" : "work";
+          if (current === "work") setCycles((c) => c + 1);
+          setMode(next);
+          return next === "work" ? WORK : BREAK;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [running]);
+
+  const reset = () => { setRunning(false); setMode("work"); setSecondsLeft(WORK); };
+  const toggle = () => setRunning((r) => !r);
+  const total = mode === "work" ? WORK : BREAK;
+  return { secondsLeft, running, mode, cycles, total, toggle, reset };
+}
+
 export default function AgendaApp() {
   const [data, setData] = useLocalState();
   const [tab, setTab] = useState("inicio");
   const [month, setMonth] = useState(currentMonthKey());
   const [financeTab, setFinanceTab] = useState("resumen");
+  const pomodoro = usePomodoro();
+  const notifiedRef = useRef(new Set());
 
   const patch = (fn) => setData((d) => ({ ...d, ...fn(d) }));
+
+  /* ---------- avisos del navegador para recordatorios vencidos (persiste entre pestañas) ---------- */
+  useEffect(() => {
+    const check = () => {
+      if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+      const now = new Date();
+      data.reminders.forEach((r) => {
+        if (r.done || !r.datetime || notifiedRef.current.has(r.id)) return;
+        if (new Date(r.datetime) <= now) {
+          new Notification("Recordatorio — Mi Agenda", { body: r.text });
+          notifiedRef.current.add(r.id);
+        }
+      });
+    };
+    check();
+    const interval = setInterval(check, 30000);
+    return () => clearInterval(interval);
+  }, [data.reminders]);
 
   /* ---------- derived: finance for selected month ---------- */
   const monthTx = useMemo(() => data.transactions.filter((t) => monthKey(t.date) === month), [data.transactions, month]);
@@ -306,8 +414,11 @@ export default function AgendaApp() {
         {NAV.map((n) => {
           const Icon = n.icon;
           return (
-            <button key={n.id} className={`a-navbtn ${tab === n.id ? "active" : ""}`} onClick={() => setTab(n.id)} title={n.label}>
+            <button key={n.id} className={`a-navbtn ${tab === n.id ? "active" : ""}`} onClick={() => setTab(n.id)} title={n.label} style={{ position: "relative" }}>
               <Icon size={18} />
+              {n.id === "pomodoro" && pomodoro.running && (
+                <span style={{ position: "absolute", top: 6, right: 8, width: 7, height: 7, borderRadius: "50%", background: "var(--sage)" }} />
+              )}
             </button>
           );
         })}
@@ -332,7 +443,7 @@ export default function AgendaApp() {
         {tab === "diario" && <DiarioTab data={data} patch={patch} />}
         {tab === "notas" && <NotasTab data={data} patch={patch} />}
         {tab === "calendario" && <CalendarioTab data={data} patch={patch} />}
-        {tab === "pomodoro" && <PomodoroTab />}
+        {tab === "pomodoro" && <PomodoroTab {...pomodoro} />}
         {tab === "recordatorios" && <RecordatoriosTab data={data} patch={patch} />}
         {tab === "stats" && <StatsTab data={data} month={month} monthTx={monthTx} />}
       </main>
@@ -467,17 +578,7 @@ function HabitosTab({ data, patch }) {
     patch((d) => ({ habits: d.habits.map((h) => h.id === hid ? { ...h, log: { ...h.log, [today]: Math.max(0, val) } } : h) }));
   };
 
-  const weekProgress = (h) => {
-    const required = h.targetDays.length || 7;
-    let done = 0;
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(weekStart, i);
-      const iso = toISO(d);
-      if (iso > today) continue;
-      if (h.targetDays.includes(d.getDay()) && (h.log[iso] || 0) >= h.targetQty) done++;
-    }
-    return { done, required, pct: required ? done / required : 0 };
-  };
+  const weekProgress = (h) => habitWeekProgress(h, today, weekStart);
 
   return (
     <div>
@@ -607,7 +708,9 @@ function ResumenFinanzas({ ingresosMes, egresosMes, ahorroMes, retiroMes, balanc
                 <Ring pct={p.pct} color={p.pct >= 1 ? "var(--sage)" : "var(--butter)"} />
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 13.5 }}>{g.name}</div>
-                  <div className="a-sub" style={{ margin: 0 }}>{g.type === "mensual" ? "Meta mensual" : "Meta a plazo fijo"}</div>
+                  <div className="a-sub" style={{ margin: 0 }}>
+                    {g.type === "mensual" ? `Mensual · ${g.category ? g.category : "todos los ingresos"}` : "Meta a plazo fijo"}
+                  </div>
                   <div className="agenda-mono" style={{ fontSize: 12.5 }}>{formatCLP(p.current)} / {formatCLP(p.target)}</div>
                 </div>
               </div>
@@ -770,12 +873,13 @@ function MetasFinanzas({ data, patch, goalProgress }) {
     setName(""); setTarget("");
   };
   const delGoal = (id) => patch((d) => ({ goals: d.goals.filter((g) => g.id !== id) }));
+  const setGoalCategory = (id, cat) => patch((d) => ({ goals: d.goals.map((g) => g.id === id ? { ...g, category: cat || null } : g) }));
 
   return (
     <div>
       <div className="a-card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Nueva meta</h3>
-        <p className="a-sub">Una meta <b>mensual</b> se compara con tus ingresos de cada mes. Una meta a <b>plazo fijo</b> se compara con el saldo de un fondo de ahorro.</p>
+        <p className="a-sub">Una meta <b>mensual</b> suma <b>todos tus ingresos del mes</b> por defecto — elige "Todos los ingresos" salvo que quieras seguir solo una categoría específica (ej. solo "Sueldo"). Una meta a <b>plazo fijo</b> se compara con el saldo de un fondo de ahorro.</p>
         <div className="a-grid a-grid-2" style={{ marginBottom: 10 }}>
           <input className="a-input" placeholder="Nombre de la meta" value={name} onChange={(e) => setName(e.target.value)} />
           <select className="a-select" value={type} onChange={(e) => setType(e.target.value)}>
@@ -816,6 +920,15 @@ function MetasFinanzas({ data, patch, goalProgress }) {
                 </div>
                 <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delGoal(g.id)} />
               </div>
+              {g.type === "mensual" && (
+                <div style={{ marginTop: 10 }}>
+                  <div className="a-stat-label">Toma como base</div>
+                  <select className="a-select" value={g.category || ""} onChange={(e) => setGoalCategory(g.id, e.target.value)}>
+                    <option value="">Todos los ingresos</option>
+                    {data.categories.ingreso.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
           );
         })}
@@ -1062,6 +1175,7 @@ const MEAL_SLOTS = [
 function ComidasTab({ data, patch }) {
   const [date, setDate] = useState(todayISO());
   const [sub, setSub] = useState("comidas");
+  const [highlightRecipe, setHighlightRecipe] = useState(null);
   const dayMeals = data.meals[date] || {};
 
   const setMeal = (slot, field, value) => {
@@ -1073,6 +1187,8 @@ function ComidasTab({ data, patch }) {
     }));
   };
 
+  const goToRecipe = (recipeId) => { setHighlightRecipe(recipeId); setSub("recetas"); };
+
   return (
     <div>
       <div className="a-row" style={{ marginBottom: 4 }}>
@@ -1083,7 +1199,7 @@ function ComidasTab({ data, patch }) {
       </div>
       <div style={{ display: "flex", gap: 8, margin: "0 0 16px" }}>
         <button className={`a-btn ${sub === "comidas" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setSub("comidas")}>Registro diario</button>
-        <button className={`a-btn ${sub === "recetas" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setSub("recetas")}>Recetas</button>
+        <button className={`a-btn ${sub === "recetas" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => { setHighlightRecipe(null); setSub("recetas"); }}>Recetas</button>
       </div>
 
       {sub === "comidas" && (
@@ -1104,7 +1220,10 @@ function ComidasTab({ data, patch }) {
                     <option value="">Sin receta vinculada</option>
                     {data.recipes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </select>
-                  <input className="a-input" placeholder="¿Qué comiste?" value={entry.text || ""} onChange={(e) => setMeal(slot.id, "text", e.target.value)} />
+                  <input className="a-input" placeholder="¿Qué comiste?" value={entry.text || ""} onChange={(e) => setMeal(slot.id, "text", e.target.value)} style={{ marginBottom: entry.recipeId ? 8 : 0 }} />
+                  {entry.recipeId && (
+                    <button className="a-btn secondary xs" onClick={() => goToRecipe(entry.recipeId)}><ChefHat size={12} /> Ver receta</button>
+                  )}
                 </div>
               );
             })}
@@ -1112,22 +1231,39 @@ function ComidasTab({ data, patch }) {
         </div>
       )}
 
-      {sub === "recetas" && <RecetasPanel data={data} patch={patch} />}
+      {sub === "recetas" && (
+        <RecetasPanel data={data} patch={patch} highlightId={highlightRecipe}
+          onGoToMeal={(mealDate) => { setDate(mealDate); setSub("comidas"); }} />
+      )}
     </div>
   );
 }
 
-function RecetasPanel({ data, patch }) {
+function RecetasPanel({ data, patch, highlightId, onGoToMeal }) {
   const [name, setName] = useState("");
   const [ingredients, setIngredients] = useState("");
   const [steps, setSteps] = useState("");
+  const [link, setLink] = useState("");
 
   const addRecipe = () => {
     if (!name.trim()) return;
-    patch((d) => ({ recipes: [...d.recipes, { id: uid(), name, ingredients, steps }] }));
-    setName(""); setIngredients(""); setSteps("");
+    patch((d) => ({ recipes: [...d.recipes, { id: uid(), name, ingredients, steps, link }] }));
+    setName(""); setIngredients(""); setSteps(""); setLink("");
   };
   const delRecipe = (id) => patch((d) => ({ recipes: d.recipes.filter((r) => r.id !== id) }));
+
+  const mealsUsingRecipe = (recipeId) => {
+    const usages = [];
+    Object.entries(data.meals || {}).forEach(([date, slots]) => {
+      Object.entries(slots || {}).forEach(([slotId, entry]) => {
+        if (entry?.recipeId === recipeId) {
+          const label = MEAL_SLOTS.find((s) => s.id === slotId)?.label || slotId;
+          usages.push({ date, label });
+        }
+      });
+    });
+    return usages.sort((a, b) => b.date.localeCompare(a.date));
+  };
 
   return (
     <div>
@@ -1136,18 +1272,33 @@ function RecetasPanel({ data, patch }) {
         <input className="a-input" placeholder="Nombre de la receta" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 8 }} />
         <textarea className="a-input" rows={2} placeholder="Ingredientes..." value={ingredients} onChange={(e) => setIngredients(e.target.value)} style={{ marginBottom: 8, fontFamily: "inherit" }} />
         <textarea className="a-input" rows={2} placeholder="Preparación..." value={steps} onChange={(e) => setSteps(e.target.value)} style={{ marginBottom: 8, fontFamily: "inherit" }} />
+        <input className="a-input" placeholder="Link de la receta (opcional, ej: video o blog)" value={link} onChange={(e) => setLink(e.target.value)} style={{ marginBottom: 8 }} />
         <button className="a-btn" onClick={addRecipe}><ChefHat size={14} /> Guardar receta</button>
       </div>
       <div className="a-grid a-grid-2">
-        {data.recipes.map((r) => (
-          <div className="a-card" key={r.id}>
-            <div className="a-row"><div style={{ fontWeight: 600 }}>{r.name}</div>
-              <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delRecipe(r.id)} />
+        {data.recipes.map((r) => {
+          const usages = mealsUsingRecipe(r.id);
+          return (
+            <div className="a-card" key={r.id} style={{ border: highlightId === r.id ? "2px solid var(--sage)" : "1px solid var(--line)" }}>
+              <div className="a-row"><div style={{ fontWeight: 600 }}>{r.name}</div>
+                <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delRecipe(r.id)} />
+              </div>
+              {r.ingredients && <div className="a-sub" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}><b>Ingredientes:</b> {r.ingredients}</div>}
+              {r.steps && <div className="a-sub" style={{ marginTop: 4, whiteSpace: "pre-wrap" }}><b>Preparación:</b> {r.steps}</div>}
+              {r.link && <div style={{ marginTop: 6 }}><a href={r.link} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, color: "var(--sage)" }}>Ver receta original ↗</a></div>}
+              {usages.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <div className="a-stat-label">Usada en Comidas</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                    {usages.map((u, i) => (
+                      <span key={i} className="a-pill chip" style={{ cursor: "pointer" }} onClick={() => onGoToMeal(u.date)}>{u.date} · {u.label}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-            {r.ingredients && <div className="a-sub" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}><b>Ingredientes:</b> {r.ingredients}</div>}
-            {r.steps && <div className="a-sub" style={{ marginTop: 4, whiteSpace: "pre-wrap" }}><b>Preparación:</b> {r.steps}</div>}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -1197,11 +1348,13 @@ function EntrenamientoTab({ data, patch }) {
   );
 }
 
-/* ================= DIARIO (corregido: sin bug de emojis + historial) ================= */
+/* ================= DIARIO (tarjetas de colores como Notas, sin bug de emojis, historial completo) ================= */
 const MOODS = ["😊", "😌", "😐", "😔", "😤", "🥳"];
+const MOOD_COLORS = { "😊": "#fde9c8", "😌": "#e3f0d8", "😐": "#dceaf7", "😔": "#ece0f7", "😤": "#fbe3ea", "🥳": "#fde9c8" };
 
 function DiarioTab({ data, patch }) {
   const [date, setDate] = useState(todayISO());
+  const [expanded, setExpanded] = useState(null);
   const entry = data.journal[date] || { mood: "", reflection: "", text: "" };
 
   const updateField = (field, val) => {
@@ -1215,10 +1368,9 @@ function DiarioTab({ data, patch }) {
 
   const pastEntries = useMemo(() => {
     return Object.entries(data.journal)
-      .filter(([d]) => d <= todayISO())
-      .sort((a, b) => b[0].localeCompare(a[0]))
-      .slice(0, 30);
-  }, [data.journal]);
+      .filter(([d]) => d <= todayISO() && d !== date)
+      .sort((a, b) => b[0].localeCompare(a[0]));
+  }, [data.journal, date]);
 
   const moodCounts = useMemo(() => {
     const counts = {};
@@ -1231,15 +1383,15 @@ function DiarioTab({ data, patch }) {
       <h1 className="a-h1 agenda-serif">Diario personal</h1>
       <p className="a-sub">Escribiendo el {new Date(date + "T00:00:00").toLocaleDateString("es-CL", { weekday: "long", day: "numeric", month: "long" })}</p>
 
-      <div className="a-card" style={{ marginBottom: 16 }}>
-        <input className="a-input" type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 180, marginBottom: 14 }} />
+      <div className="a-card" style={{ marginBottom: 16, background: entry.mood ? MOOD_COLORS[entry.mood] : "#fff" }}>
+        <input className="a-input" type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 180, marginBottom: 14, background: "rgba(255,255,255,0.6)" }} />
 
         <div style={{ marginBottom: 14 }}>
           <div className="a-stat-label">¿Cómo te sientes hoy?</div>
           <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
             {MOODS.map((m) => (
               <button key={m} type="button" onClick={() => updateField("mood", m)}
-                style={{ fontSize: 20, background: entry.mood === m ? "var(--sage-dim)" : "var(--bg)", border: entry.mood === m ? "1px solid var(--sage)" : "1px solid var(--line)", borderRadius: 10, width: 42, height: 42, cursor: "pointer" }}>
+                style={{ fontSize: 20, background: entry.mood === m ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)", border: entry.mood === m ? "1px solid var(--sage)" : "1px solid var(--line)", borderRadius: 10, width: 42, height: 42, cursor: "pointer" }}>
                 {m}
               </button>
             ))}
@@ -1248,12 +1400,12 @@ function DiarioTab({ data, patch }) {
 
         <div style={{ marginBottom: 14 }}>
           <div className="a-stat-label">¿Qué quieres recordar de hoy?</div>
-          <input className="a-input" value={entry.reflection} onChange={(e) => updateField("reflection", e.target.value)} />
+          <input className="a-input" value={entry.reflection} onChange={(e) => updateField("reflection", e.target.value)} style={{ background: "rgba(255,255,255,0.7)" }} />
         </div>
 
         <div>
           <div className="a-stat-label">Notas del día</div>
-          <textarea className="a-input" rows={5} value={entry.text} onChange={(e) => updateField("text", e.target.value)} style={{ resize: "vertical", fontFamily: "inherit" }} />
+          <textarea className="a-input" rows={5} value={entry.text} onChange={(e) => updateField("text", e.target.value)} style={{ resize: "vertical", fontFamily: "inherit", background: "rgba(255,255,255,0.7)" }} />
         </div>
       </div>
 
@@ -1271,16 +1423,23 @@ function DiarioTab({ data, patch }) {
         </div>
       )}
 
-      <div className="a-card">
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Entradas anteriores</h3>
-        {pastEntries.length === 0 && <p className="a-sub">Aún no tienes entradas guardadas.</p>}
+      <h3 style={{ fontSize: 14.5, margin: "0 0 12px" }}>Entradas anteriores</h3>
+      {pastEntries.length === 0 && <p className="a-sub">Aún no tienes otras entradas guardadas.</p>}
+      <div className="a-grid a-grid-3">
         {pastEntries.map(([d, e]) => (
-          <div className="a-list-item" key={d} style={{ cursor: "pointer" }} onClick={() => setDate(d)}>
-            <span style={{ fontSize: 18 }}>{e.mood || "•"}</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13 }}>{d}{d === date ? " (viendo)" : ""}</div>
-              <div className="a-sub" style={{ margin: 0, fontSize: 11.5 }}>{e.reflection || e.text?.slice(0, 60) || "Sin notas"}</div>
+          <div className="a-note" key={d} style={{ background: e.mood ? MOOD_COLORS[e.mood] : "#fff", border: "1px solid var(--line)", cursor: "pointer" }}
+            onClick={() => setExpanded(expanded === d ? null : d)}>
+            <div className="a-row" style={{ alignItems: "flex-start" }}>
+              <span style={{ fontSize: 20 }}>{e.mood || "•"}</span>
+              <div style={{ flex: 1, textAlign: "right" }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600 }}>{d}</div>
+                <Pencil size={12} color="var(--text-soft)" style={{ cursor: "pointer" }} onClick={(ev) => { ev.stopPropagation(); setDate(d); }} />
+              </div>
             </div>
+            {e.reflection && <p style={{ fontSize: 12.5, marginTop: 8, marginBottom: 4, fontWeight: 600 }}>{e.reflection}</p>}
+            <p style={{ fontSize: 12, marginTop: 4, whiteSpace: "pre-wrap", color: "var(--text-soft)" }}>
+              {expanded === d ? (e.text || "Sin notas adicionales.") : (e.text ? e.text.slice(0, 90) + (e.text.length > 90 ? "…" : "") : "Sin notas adicionales.")}
+            </p>
           </div>
         ))}
       </div>
@@ -1476,45 +1635,30 @@ function CalendarioTab({ data, patch }) {
           </div>
         </div>
       )}
+
+      <div className="a-card" style={{ marginTop: 16 }}>
+        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Notificarme de verdad</h3>
+        <p className="a-sub">Esta app no puede enviar notificaciones por sí sola si está cerrada. Pero puedes exportar tus eventos a un archivo .ics e importarlo en Google Calendar u Outlook — ahí sí te van a llegar avisos al correo/celular.</p>
+        <button className="a-btn secondary xs" onClick={() => {
+          const all = [];
+          Object.entries(data.calendarEvents || {}).forEach(([date, evs]) => evs.forEach((e) => all.push({ id: e.id, title: e.title, dtstart: dateTimeToICS(date, e.time) })));
+          if (all.length === 0) { alert("No tienes eventos para exportar todavía."); return; }
+          downloadFile("eventos-sanorganic.ics", buildICS(all), "text/calendar;charset=utf-8;");
+        }}>Exportar todos los eventos (.ics)</button>
+      </div>
     </div>
   );
 }
 
-/* ================= POMODORO ================= */
-function PomodoroTab() {
-  const WORK = 25 * 60, BREAK = 5 * 60;
-  const [secondsLeft, setSecondsLeft] = useState(WORK);
-  const [running, setRunning] = useState(false);
-  const [mode, setMode] = useState("work");
-  const [cycles, setCycles] = useState(0);
-  const intervalRef = useRef(null);
-
-  useEffect(() => {
-    if (running) {
-      intervalRef.current = setInterval(() => {
-        setSecondsLeft((s) => {
-          if (s <= 1) {
-            const nextMode = mode === "work" ? "break" : "work";
-            if (mode === "work") setCycles((c) => c + 1);
-            setMode(nextMode);
-            return nextMode === "work" ? WORK : BREAK;
-          }
-          return s - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(intervalRef.current);
-  }, [running, mode]);
-
-  const reset = () => { setRunning(false); setMode("work"); setSecondsLeft(WORK); };
+/* ================= POMODORO (el estado vive en AgendaApp, sigue corriendo al cambiar de pestaña) ================= */
+function PomodoroTab({ secondsLeft, running, mode, cycles, total, toggle, reset }) {
   const mm = String(Math.floor(secondsLeft / 60)).padStart(2, "0");
   const ss = String(secondsLeft % 60).padStart(2, "0");
-  const total = mode === "work" ? WORK : BREAK;
 
   return (
     <div>
       <h1 className="a-h1 agenda-serif">Pomodoro</h1>
-      <p className="a-sub">25 min de foco, 5 min de descanso.</p>
+      <p className="a-sub">25 min de foco, 5 min de descanso. Sigue corriendo aunque cambies de sección.</p>
       <div className="a-card" style={{ textAlign: "center", padding: "40px 20px" }}>
         <div style={{ margin: "0 auto 20px" }}>
           <Ring pct={1 - secondsLeft / total} size={180} color={mode === "work" ? "var(--sage)" : "var(--butter)"} />
@@ -1522,7 +1666,7 @@ function PomodoroTab() {
         <div className="agenda-mono" style={{ fontSize: 40, fontWeight: 700, marginTop: -140, marginBottom: 120 }}>{mm}:{ss}</div>
         <div className="a-pill in" style={{ marginBottom: 20 }}>{mode === "work" ? "Foco" : "Descanso"}</div>
         <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-          <button className="a-btn" onClick={() => setRunning((r) => !r)}>{running ? <Pause size={14} /> : <Play size={14} />} {running ? "Pausar" : "Iniciar"}</button>
+          <button className="a-btn" onClick={toggle}>{running ? <Pause size={14} /> : <Play size={14} />} {running ? "Pausar" : "Iniciar"}</button>
           <button className="a-btn secondary" onClick={reset}><RotateCcw size={14} /> Reiniciar</button>
         </div>
         <p className="a-sub" style={{ marginTop: 20 }}>Ciclos completados hoy: {cycles}</p>
@@ -1545,11 +1689,39 @@ function RecordatoriosTab({ data, patch }) {
   const delReminder = (id) => patch((d) => ({ reminders: d.reminders.filter((r) => r.id !== id) }));
 
   const sorted = [...data.reminders].sort((a, b) => (a.datetime || "").localeCompare(b.datetime || ""));
+  const [notifStatus, setNotifStatus] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
+
+  const exportAllICS = () => {
+    if (data.reminders.length === 0) { alert("No tienes recordatorios para exportar todavía."); return; }
+    const events = data.reminders.filter((r) => r.datetime).map((r) => {
+      const [d, t] = r.datetime.split("T");
+      return { id: r.id, title: r.text, dtstart: dateTimeToICS(d, t) };
+    });
+    downloadFile("recordatorios-sanorganic.ics", buildICS(events), "text/calendar;charset=utf-8;");
+  };
 
   return (
     <div>
       <h1 className="a-h1 agenda-serif">Recordatorios</h1>
       <p className="a-sub">Cosas que no quieres olvidar.</p>
+
+      <div className="a-card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Notificarme de verdad</h3>
+        <p className="a-sub">
+          Mientras esta pestaña esté abierta, la app puede avisarte con una notificación del navegador.
+          Para que te avise incluso con la app cerrada (al correo o celular), exporta a .ics e impórtalo en Google Calendar u Outlook.
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {notifStatus !== "unsupported" && notifStatus !== "granted" && (
+            <button className="a-btn secondary xs" onClick={() => Notification.requestPermission().then(setNotifStatus)}>
+              <Bell size={13} /> Activar avisos en este navegador
+            </button>
+          )}
+          {notifStatus === "granted" && <span className="a-pill in">Avisos del navegador activados</span>}
+          <button className="a-btn secondary xs" onClick={exportAllICS}>Exportar todos (.ics)</button>
+        </div>
+      </div>
+
       <div className="a-card" style={{ marginBottom: 16 }}>
         <div className="a-grid a-grid-2" style={{ marginBottom: 10 }}>
           <input className="a-input" placeholder="¿Qué necesitas recordar?" value={text} onChange={(e) => setText(e.target.value)} />
@@ -1574,12 +1746,50 @@ function RecordatoriosTab({ data, patch }) {
   );
 }
 
+/* ================= EXPORTAR (planillas y respaldo) ================= */
+function ExportPanel({ data }) {
+  const exportTransactions = () => {
+    const rows = data.transactions.map((t) => ({
+      fecha: t.date, tipo: t.type, concepto: t.concept, categoria: t.category, monto: t.amount,
+    }));
+    downloadFile("finanzas-sanorganic.csv", toCSV(rows), "text/csv;charset=utf-8;");
+  };
+  const exportHabits = () => {
+    const rows = [];
+    data.habits.forEach((h) => {
+      Object.entries(h.log).forEach(([date, qty]) => {
+        rows.push({ habito: h.name, fecha: date, cantidad: qty, meta: h.targetQty, cumplido: qty >= h.targetQty ? "sí" : "no" });
+      });
+    });
+    downloadFile("habitos-sanorganic.csv", toCSV(rows), "text/csv;charset=utf-8;");
+  };
+  const exportBackup = () => {
+    downloadFile("respaldo-agenda-sanorganic.json", JSON.stringify(data, null, 2), "application/json");
+  };
+
+  return (
+    <div className="a-card">
+      <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Exportar datos</h3>
+      <p className="a-sub">Descarga tus datos como planilla (Excel/Google Sheets puede abrir estos .csv directamente) o como respaldo completo.</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="a-btn secondary xs" onClick={exportTransactions}>Movimientos financieros (.csv)</button>
+        <button className="a-btn secondary xs" onClick={exportHabits}>Registro de hábitos (.csv)</button>
+        <button className="a-btn secondary xs" onClick={exportBackup}>Respaldo completo (.json)</button>
+      </div>
+    </div>
+  );
+}
+
 /* ================= STATS ================= */
 function StatsTab({ data, month, monthTx }) {
   const byCategory = {};
   monthTx.filter((t) => t.type === "egreso").forEach((t) => { byCategory[t.category] = (byCategory[t.category] || 0) + t.amount; });
   const totalEgresos = Object.values(byCategory).reduce((a, b) => a + b, 0) || 1;
-  const habitRate = data.habits.length ? data.habits.reduce((s, h) => s + ((h.log[todayISO()] || 0) >= h.targetQty ? 1 : 0), 0) / data.habits.length : 0;
+
+  const today = todayISO();
+  const weekStart = startOfWeek(today);
+  const habitStats = data.habits.map((h) => ({ h, wp: habitWeekProgress(h, today, weekStart) }));
+  const habitRate = habitStats.length ? habitStats.reduce((s, x) => s + x.wp.pct, 0) / habitStats.length : 0;
 
   return (
     <div>
@@ -1600,10 +1810,25 @@ function StatsTab({ data, month, monthTx }) {
           </div>
         ))}
       </div>
-      <div className="a-card">
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Cumplimiento de hábitos hoy</h3>
-        <Ring pct={habitRate} color="var(--sage)" />
+      <div className="a-card" style={{ marginBottom: 16 }}>
+        <div className="a-row" style={{ marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: 14.5 }}>Cumplimiento de hábitos esta semana</h3>
+          <Ring pct={habitRate} size={54} color="var(--sage)" />
+        </div>
+        {habitStats.length === 0 && <p className="a-sub">Aún no tienes hábitos creados.</p>}
+        {habitStats.map(({ h, wp }) => (
+          <div key={h.id} style={{ marginBottom: 10 }}>
+            <div className="a-row" style={{ marginBottom: 4 }}>
+              <span style={{ fontSize: 13 }}>{h.emoji} {h.name}</span>
+              <span className="agenda-mono" style={{ fontSize: 12.5 }}>{wp.done}/{wp.required} · {Math.round(wp.pct * 100)}%</span>
+            </div>
+            <div style={{ height: 6, background: "var(--line)", borderRadius: 4, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${wp.pct * 100}%`, background: "var(--sage)" }} />
+            </div>
+          </div>
+        ))}
       </div>
+      <ExportPanel data={data} />
     </div>
   );
 }
