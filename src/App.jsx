@@ -235,6 +235,16 @@ const GlobalStyle = () => (
     .a-daygrid-content { flex:1; }
     .a-daygrid-placeholder { color:var(--text-faint); font-size:13px; }
 
+    .a-monthgrid { gap:6px; }
+    .a-monthcell { aspect-ratio:1; border-radius:12px; background:var(--bg-card); border:1px solid var(--line);
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; cursor:pointer; transition:all .12s; font-size:13px; }
+    .a-monthcell:hover { background:var(--bg-card-2); }
+    .a-monthcell.today { border:2px solid var(--sage); font-weight:700; color:var(--sage); }
+    .a-monthcell.selected { background:var(--sage); color:#fff; border-color:var(--sage); }
+    .a-monthcell.selected.today { color:#fff; }
+    .a-monthdot { width:5px; height:5px; border-radius:50%; background:var(--butter); }
+    .a-monthcell.selected .a-monthdot { background:#fff; }
+
     .a-stat-label { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-soft); margin-bottom:6px;}
     .a-stat-num { font-size:22px; font-weight:600; }
 
@@ -1707,6 +1717,7 @@ function CalendarioTab({ data, patch }) {
   const [view, setView] = useState("semana");
   const [refDate, setRefDate] = useState(todayISO());
   const [mobileDay, setMobileDay] = useState(todayISO());
+  const [selectedMonthDay, setSelectedMonthDay] = useState(todayISO());
   const [formDate, setFormDate] = useState(todayISO());
   const [time, setTime] = useState("");
   const [title, setTitle] = useState("");
@@ -1869,25 +1880,47 @@ function CalendarioTab({ data, patch }) {
 
       {view === "mes" && (
         <div>
-          <div className="a-grid a-grid-7" style={{ marginBottom: 6 }}>
-            {WEEKDAYS_MON_FIRST.map((d) => <div key={d} className="a-sub" style={{ textAlign: "center", margin: 0 }}>{WEEKDAYS[d]}</div>)}
+          <div className="a-grid a-grid-7" style={{ marginBottom: 8 }}>
+            {["L", "M", "X", "J", "V", "S", "D"].map((letter, i) => (
+              <div key={i} className="a-sub" style={{ textAlign: "center", margin: 0, fontWeight: 700 }}>{letter}</div>
+            ))}
           </div>
-          <div className="a-grid a-grid-7">
+          <div className="a-grid a-grid-7 a-monthgrid">
             {monthCells.map((d) => {
               const iso = toISO(d);
               const inMonth = d.getMonth() === monthDate.getMonth();
               const evs = eventsFor(iso);
+              const isToday = iso === todayISO();
+              const isSelected = iso === selectedMonthDay;
               return (
-                <div key={iso} className="a-card" style={{ padding: 6, minHeight: 74, opacity: inMonth ? 1 : 0.4, cursor: "pointer" }} onClick={() => setFormDate(iso)}>
-                  <div className="agenda-mono" style={{ fontSize: 11 }}>{d.getDate()}</div>
-                  {evs.slice(0, 2).map((e) => (
-                    <div key={e.id} style={{ fontSize: 9.5, background: "var(--bg-card-2)", borderRadius: 4, padding: "1px 4px", marginTop: 2 }}>{e.title}</div>
-                  ))}
-                  {evs.length > 2 && <div className="a-sub" style={{ fontSize: 9, margin: 0 }}>+{evs.length - 2} más</div>}
+                <div key={iso}
+                  className={`a-monthcell ${isToday ? "today" : ""} ${isSelected ? "selected" : ""}`}
+                  style={{ opacity: inMonth ? 1 : 0.35 }}
+                  onClick={() => { setFormDate(iso); setSelectedMonthDay(iso); }}>
+                  <span className="agenda-mono">{d.getDate()}</span>
+                  {evs.length > 0 && <span className="a-monthdot" />}
                 </div>
               );
             })}
           </div>
+
+          {selectedMonthDay && (
+            <div className="a-card" style={{ marginTop: 14 }}>
+              <div className="a-row" style={{ marginBottom: 8 }}>
+                <h3 style={{ margin: 0, fontSize: 14, textTransform: "capitalize" }}>
+                  {new Date(selectedMonthDay + "T00:00:00").toLocaleDateString("es-CL", { weekday: "long", day: "numeric", month: "long" })}
+                </h3>
+                <X size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => setSelectedMonthDay(null)} />
+              </div>
+              {eventsFor(selectedMonthDay).length === 0 && <p className="a-sub">Sin eventos este día. Usa "Nuevo evento" arriba (ya quedó con esta fecha lista).</p>}
+              {eventsFor(selectedMonthDay).map((e) => (
+                <div key={e.id} className="a-list-item">
+                  <span style={{ flex: 1, fontSize: 13.5 }}>{e.time ? `${e.time} · ` : ""}{e.title}</span>
+                  <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delEvent(selectedMonthDay, e.id)} />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
