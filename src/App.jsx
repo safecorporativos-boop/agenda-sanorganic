@@ -4,7 +4,7 @@ import {
   BarChart3, Plus, Trash2, ChevronLeft, ChevronRight, Target, PiggyBank,
   TrendingUp, TrendingDown, X, Check, Sparkles, Flag, FolderKanban, Circle,
   UtensilsCrossed, Dumbbell, Timer, Bell, Pencil, ArrowDownCircle, ArrowUpCircle,
-  Play, Pause, RotateCcw, ChefHat
+  Play, Pause, RotateCcw, ChefHat, Settings, Upload, Download, Image as ImageIcon
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -49,17 +49,28 @@ const startOfWeek = (isoDate) => {
 };
 
 const habitWeekProgress = (h, today, weekStart) => {
-  let done = 0, elapsedRequired = 0;
+  if (h.mode === "weekly") {
+    let total = 0;
+    for (let i = 0; i < 7; i++) {
+      const iso = toISO(addDays(weekStart, i));
+      if (iso > today) continue;
+      total += h.log[iso] || 0;
+    }
+    return { done: total, required: h.targetCount || 1, weekTotal: total, pct: (h.targetCount || 1) ? total / (h.targetCount || 1) : 0 };
+  }
+  let done = 0, elapsedRequired = 0, weekTotal = 0;
   for (let i = 0; i < 7; i++) {
     const d = addDays(weekStart, i);
     const iso = toISO(d);
     if (iso > today) continue;
     if (h.targetDays.includes(d.getDay())) {
       elapsedRequired++;
-      if ((h.log[iso] || 0) >= h.targetQty) done++;
+      const qty = h.log[iso] || 0;
+      weekTotal += qty;
+      if (qty >= h.targetQty) done++;
     }
   }
-  return { done, required: elapsedRequired, pct: elapsedRequired ? done / elapsedRequired : 0 };
+  return { done, required: elapsedRequired, weekTotal, pct: elapsedRequired ? done / elapsedRequired : 0 };
 };
 
 const addDays = (date, n) => {
@@ -118,8 +129,8 @@ const defaultData = () => ({
   name: "",
   priorities: {}, // { 'YYYY-MM-DD': [{id,text,done}] }
   habits: [
-    { id: uid(), name: "Tomar agua", emoji: "💧", targetQty: 8, targetDays: [0,1,2,3,4,5,6], log: {} },
-    { id: uid(), name: "Mover el cuerpo", emoji: "🌱", targetQty: 1, targetDays: [1,2,3,4,5], log: {} },
+    { id: uid(), name: "Tomar agua", emoji: "💧", mode: "daily", targetQty: 3, unit: "vasos", targetDays: [1,2,3,4,5], log: {} },
+    { id: uid(), name: "Hacer ejercicio", emoji: "🏋️", mode: "weekly", targetCount: 3, unit: "rutinas", log: {} },
   ],
   categories: {
     ingreso: ["Ventas SAN-ORGANIC", "Sueldo", "Otros ingresos"],
@@ -137,6 +148,7 @@ const defaultData = () => ({
   meals: {}, // { 'YYYY-MM-DD': { desayuno:{text,recipeId}, almuerzo:{...}, cena:{...}, snack:{...} } }
   workouts: [], // {id,date,type,duration,notes}
   reminders: [], // {id,text,datetime,done}
+  wallpaper: "", // URL de imagen de fondo (opcional)
 });
 
 function useLocalState() {
@@ -188,6 +200,7 @@ const GlobalStyle = () => (
     }
     .a-navbtn:hover { background:var(--bg-card-2); color:var(--text); }
     .a-navbtn.active { background:var(--sage-dim); color:var(--sage); }
+    .a-navlabel-mobile { display:none; }
 
     .a-main { flex:1; min-width:0; padding:28px 34px; overflow-y:auto; max-height:92vh; }
     .a-h1 { font-size:26px; font-weight:600; margin:0 0 4px; }
@@ -254,7 +267,9 @@ const GlobalStyle = () => (
 
     @media (max-width: 760px) {
       .agenda-root { flex-direction:column; border-radius:0; }
-      .a-nav { width:100%; flex-direction:row; justify-content:flex-start; padding:8px 4px; order:2; max-height:none; }
+      .a-nav { width:100%; flex-direction:row; justify-content:flex-start; padding:8px 4px; order:2; max-height:none; overflow-x:auto; overflow-y:visible; }
+      .a-navbtn { flex-direction:column; width:auto; height:auto; padding:6px 9px; border-radius:10px; gap:2px; }
+      .a-navlabel-mobile { display:block; font-size:8.5px; font-weight:600; white-space:nowrap; }
       .a-main { max-height:none; padding:18px 16px 90px; }
       .a-grid-3, .a-grid-4, .a-grid-2 { grid-template-columns:1fr; }
       .a-grid-7 { grid-template-columns:repeat(7,minmax(34px,1fr)); }
@@ -263,7 +278,7 @@ const GlobalStyle = () => (
 );
 
 /* ---------------- RING PROGRESS ---------------- */
-function Ring({ pct, color = "var(--sage)", size = 78 }) {
+function Ring({ pct, color = "var(--sage)", size = 78, showLabel = true }) {
   const clamped = Math.max(0, Math.min(1, pct || 0));
   const r = (size - 10) / 2;
   const c = 2 * Math.PI * r;
@@ -275,7 +290,7 @@ function Ring({ pct, color = "var(--sage)", size = 78 }) {
           strokeDasharray={c} strokeDashoffset={c - clamped * c} strokeLinecap="round"
           style={{ transition: "stroke-dashoffset .4s ease" }} />
       </svg>
-      <div className="a-ring-label">{Math.round(clamped * 100)}%</div>
+      {showLabel && <div className="a-ring-label">{Math.round(clamped * 100)}%</div>}
     </div>
   );
 }
@@ -295,6 +310,7 @@ const NAV = [
   { id: "pomodoro", label: "Pomodoro", icon: Timer },
   { id: "recordatorios", label: "Recordatorios", icon: Bell },
   { id: "stats", label: "Stats", icon: BarChart3 },
+  { id: "ajustes", label: "Ajustes", icon: Settings },
 ];
 
 /* ============================================================ */
@@ -360,6 +376,18 @@ export default function AgendaApp() {
     return () => clearInterval(interval);
   }, [data.reminders]);
 
+  /* ---------- fondo de pantalla personalizado ---------- */
+  useEffect(() => {
+    if (data.wallpaper) {
+      document.body.style.backgroundImage = `url(${data.wallpaper})`;
+      document.body.style.backgroundSize = "cover";
+      document.body.style.backgroundPosition = "center";
+      document.body.style.backgroundAttachment = "fixed";
+    } else {
+      document.body.style.backgroundImage = "";
+    }
+  }, [data.wallpaper]);
+
   /* ---------- derived: finance for selected month ---------- */
   const monthTx = useMemo(() => data.transactions.filter((t) => monthKey(t.date) === month), [data.transactions, month]);
   const ingresosMes = monthTx.filter((t) => t.type === "ingreso").reduce((s, t) => s + t.amount, 0);
@@ -416,6 +444,7 @@ export default function AgendaApp() {
           return (
             <button key={n.id} className={`a-navbtn ${tab === n.id ? "active" : ""}`} onClick={() => setTab(n.id)} title={n.label} style={{ position: "relative" }}>
               <Icon size={18} />
+              <span className="a-navlabel-mobile">{n.label}</span>
               {n.id === "pomodoro" && pomodoro.running && (
                 <span style={{ position: "absolute", top: 6, right: 8, width: 7, height: 7, borderRadius: "50%", background: "var(--sage)" }} />
               )}
@@ -446,6 +475,7 @@ export default function AgendaApp() {
         {tab === "pomodoro" && <PomodoroTab {...pomodoro} />}
         {tab === "recordatorios" && <RecordatoriosTab data={data} patch={patch} />}
         {tab === "stats" && <StatsTab data={data} month={month} monthTx={monthTx} />}
+        {tab === "ajustes" && <AjustesTab data={data} patch={patch} setData={setData} />}
       </main>
     </div>
   );
@@ -454,10 +484,27 @@ export default function AgendaApp() {
 /* ================= INICIO ================= */
 function InicioTab({ data, todayList, progressPct, ingresosMes, egresosMes, month, goalProgress, goToFinanzas, upcomingEvents }) {
   const topGoals = data.goals.slice(0, 2);
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const dayLabel = now.toLocaleDateString("es-CL", { weekday: "long", day: "numeric", month: "long" });
+  const timeLabel = now.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
   return (
     <div>
-      <h1 className="a-h1 agenda-serif">{data.name ? `Hola, ${data.name} 🌿` : "Hola 🌿"}</h1>
-      <p className="a-sub">Tu resumen de {monthLabel(month)}.</p>
+      <div className="a-row" style={{ alignItems: "flex-start", marginBottom: 4, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h1 className="a-h1 agenda-serif">{data.name ? `Hola, ${data.name} 🌿` : "Hola 🌿"}</h1>
+          <p className="a-sub" style={{ marginBottom: 0 }}>Tu resumen de {monthLabel(month)}.</p>
+        </div>
+        <div className="a-card" style={{ padding: "10px 16px", textAlign: "right" }}>
+          <div className="a-sub" style={{ margin: 0, textTransform: "capitalize" }}>{dayLabel}</div>
+          <div className="agenda-mono" style={{ fontSize: 20, fontWeight: 700 }}>{timeLabel}</div>
+        </div>
+      </div>
+      <div style={{ marginBottom: 20 }} />
 
       <div className="a-grid a-grid-3" style={{ marginBottom: 16 }}>
         <div className="a-card">
@@ -556,12 +603,15 @@ function PrioridadesTab({ list, onAdd, onToggle, onDelete }) {
   );
 }
 
-/* ================= HABITOS (con cantidad, días objetivo y % semanal) ================= */
+/* ================= HABITOS (diario con cantidad/días, o meta semanal sin días fijos) ================= */
 function HabitosTab({ data, patch }) {
+  const [mode, setMode] = useState("daily");
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState("🌿");
   const [qty, setQty] = useState(1);
-  const [days, setDays] = useState([0, 1, 2, 3, 4, 5, 6]);
+  const [unit, setUnit] = useState("");
+  const [days, setDays] = useState([1, 2, 3, 4, 5]);
+  const [weeklyCount, setWeeklyCount] = useState(3);
   const today = todayISO();
   const weekStart = startOfWeek(today);
 
@@ -569,42 +619,74 @@ function HabitosTab({ data, patch }) {
 
   const addHabit = () => {
     if (!name.trim()) return;
-    patch((d) => ({ habits: [...d.habits, { id: uid(), name, emoji, targetQty: qty || 1, targetDays: days.length ? days : [0,1,2,3,4,5,6], log: {} }] }));
-    setName(""); setEmoji("🌿"); setQty(1); setDays([0,1,2,3,4,5,6]);
+    const base = { id: uid(), name, emoji, mode, unit: unit.trim(), log: {} };
+    patch((d) => ({
+      habits: [...d.habits, mode === "daily"
+        ? { ...base, targetQty: qty || 1, targetDays: days.length ? days : [0,1,2,3,4,5,6] }
+        : { ...base, targetCount: weeklyCount || 1 }],
+    }));
+    setName(""); setEmoji("🌿"); setQty(1); setUnit(""); setDays([1,2,3,4,5]); setWeeklyCount(3);
   };
   const removeHabit = (hid) => patch((d) => ({ habits: d.habits.filter((h) => h.id !== hid) }));
 
-  const setQtyToday = (hid, val) => {
-    patch((d) => ({ habits: d.habits.map((h) => h.id === hid ? { ...h, log: { ...h.log, [today]: Math.max(0, val) } } : h) }));
+  const bumpWeekly = (hid, delta) => {
+    patch((d) => ({ habits: d.habits.map((h) => h.id === hid ? { ...h, log: { ...h.log, [today]: Math.max(0, (h.log[today] || 0) + delta) } } : h) }));
   };
 
   const weekProgress = (h) => habitWeekProgress(h, today, weekStart);
+  const [selectedDay, setSelectedDay] = useState({}); // { habitId: isoDate }
 
   return (
     <div>
       <h1 className="a-h1 agenda-serif">Hábitos</h1>
-      <p className="a-sub">Define cantidad y días objetivo — el % se calcula sobre tu semana.</p>
+      <p className="a-sub">Hábitos diarios con días fijos (ej: agua, lectura, horario de trabajo) o metas semanales sin días fijos (ej: 3 rutinas a la semana).</p>
 
       <div className="a-card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Nuevo hábito</h3>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <button className={`a-btn ${mode === "daily" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setMode("daily")}>Diario con días fijos</button>
+          <button className={`a-btn ${mode === "weekly" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setMode("weekly")}>Meta semanal (sin días fijos)</button>
+        </div>
+
         <div className="a-grid a-grid-4" style={{ marginBottom: 10 }}>
           <input className="a-input" placeholder="Emoji" value={emoji} onChange={(e) => setEmoji(e.target.value)} />
           <input className="a-input" style={{ gridColumn: "span 2" }} placeholder="Nombre del hábito" value={name} onChange={(e) => setName(e.target.value)} />
-          <input className="a-input" type="number" min={1} placeholder="Cantidad (ej: 8 vasos)" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 1)} />
+          <input className="a-input" placeholder="Unidad (ej: vasos, min)" value={unit} onChange={(e) => setUnit(e.target.value)} />
         </div>
-        <div className="a-stat-label">Días de la semana</div>
-        <div style={{ display: "flex", gap: 6, margin: "6px 0 12px" }}>
-          {WEEKDAYS_MON_FIRST.map((dNum) => (
-            <div key={dNum} className={`a-daychip ${days.includes(dNum) ? "on" : ""}`} onClick={() => toggleDay(dNum)}>{WEEKDAYS[dNum]}</div>
-          ))}
-        </div>
+
+        {mode === "daily" ? (
+          <>
+            <div className="a-grid a-grid-2" style={{ marginBottom: 10 }}>
+              <input className="a-input" type="number" min={1} placeholder="Cantidad diaria (ej: 3 vasos, 30 min)" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 1)} />
+            </div>
+            <div className="a-stat-label">Días de la semana</div>
+            <div style={{ display: "flex", gap: 6, margin: "6px 0 12px" }}>
+              {WEEKDAYS_MON_FIRST.map((dNum) => (
+                <div key={dNum} className={`a-daychip ${days.includes(dNum) ? "on" : ""}`} onClick={() => toggleDay(dNum)}>{WEEKDAYS[dNum]}</div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="a-grid a-grid-2" style={{ marginBottom: 10 }}>
+            <input className="a-input" type="number" min={1} placeholder="Veces por semana (ej: 3)" value={weeklyCount} onChange={(e) => setWeeklyCount(parseInt(e.target.value) || 1)} />
+          </div>
+        )}
         <button className="a-btn" onClick={addHabit}><Plus size={14} /> Crear hábito</button>
       </div>
 
       <div className="a-grid a-grid-2">
         {data.habits.map((h) => {
           const wp = weekProgress(h);
-          const qtyDone = h.log[today] || 0;
+          const isWeekly = h.mode === "weekly";
+          const isCheckbox = !isWeekly && h.targetQty === 1;
+          const activeIso = selectedDay[h.id] || today;
+          const activeQty = h.log[activeIso] || 0;
+          const weeklyTarget = !isWeekly ? h.targetQty * h.targetDays.length : 0;
+
+          const setQtyFor = (iso, val) => {
+            patch((d) => ({ habits: d.habits.map((x) => x.id === h.id ? { ...x, log: { ...x.log, [iso]: Math.max(0, val) } } : x) }));
+          };
+
           return (
             <div className="a-card" key={h.id}>
               <div className="a-row" style={{ alignItems: "flex-start" }}>
@@ -612,21 +694,78 @@ function HabitosTab({ data, patch }) {
                   <Ring pct={wp.pct} size={58} color={wp.pct >= 1 ? "var(--sage)" : "var(--butter)"} />
                   <div>
                     <div style={{ fontWeight: 600 }}>{h.emoji} {h.name}</div>
-                    <div className="a-sub" style={{ margin: 0 }}>{wp.done}/{wp.required} días esta semana</div>
-                    <div className="a-sub" style={{ margin: 0 }}>{h.targetDays.map((d) => WEEKDAYS[d]).join(" · ")}</div>
+                    {isWeekly ? (
+                      <div className="a-sub" style={{ margin: 0 }}>{wp.weekTotal}/{h.targetCount} {h.unit || "veces"} esta semana</div>
+                    ) : (
+                      <div className="a-sub" style={{ margin: 0 }}>{wp.done}/{wp.required} días completados esta semana</div>
+                    )}
                   </div>
                 </div>
                 <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => removeHabit(h.id)} />
               </div>
               <hr className="a-divider" />
-              <div className="a-row">
-                <span className="a-sub" style={{ margin: 0 }}>Hoy</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <button className="a-btn secondary xs" onClick={() => setQtyToday(h.id, qtyDone - 1)}>−</button>
-                  <span className="agenda-mono" style={{ minWidth: 50, textAlign: "center" }}>{qtyDone}/{h.targetQty}</span>
-                  <button className="a-btn secondary xs" onClick={() => setQtyToday(h.id, qtyDone + 1)}>+</button>
+
+              {isWeekly ? (
+                <div className="a-row">
+                  <span className="a-sub" style={{ margin: 0 }}>Esta semana</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <button className="a-btn secondary xs" onClick={() => bumpWeekly(h.id, -1)}>−</button>
+                    <span className="agenda-mono" style={{ minWidth: 50, textAlign: "center" }}>{wp.weekTotal}/{h.targetCount}</span>
+                    <button className="a-btn secondary xs" onClick={() => bumpWeekly(h.id, 1)}>+</button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <>
+                  <div className="a-stat-label">Marca cada día por separado</div>
+                  <div style={{ display: "flex", gap: 6, margin: "6px 0 12px" }}>
+                    {WEEKDAYS_MON_FIRST.map((dNum) => {
+                      const iso = toISO(addDays(weekStart, WEEKDAYS_MON_FIRST.indexOf(dNum)));
+                      const isTarget = h.targetDays.includes(dNum);
+                      const isFuture = iso > today;
+                      const done = (h.log[iso] || 0) >= h.targetQty;
+                      const isActive = activeIso === iso;
+                      let style = {};
+                      if (!isTarget) style = { opacity: 0.3 };
+                      else if (isFuture) style = { opacity: 0.4, cursor: "not-allowed" };
+                      return (
+                        <div key={dNum}
+                          className={`a-daychip ${done ? "on" : ""}`}
+                          style={{ ...style, outline: isActive ? "2px solid var(--sage)" : "none", cursor: isTarget && !isFuture ? "pointer" : style.cursor }}
+                          onClick={() => { if (isTarget && !isFuture) setSelectedDay((s) => ({ ...s, [h.id]: iso })); }}>
+                          {WEEKDAYS[dNum]}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="a-row">
+                    <span className="a-sub" style={{ margin: 0 }}>
+                      {activeIso === today ? "Hoy" : new Date(activeIso + "T00:00:00").toLocaleDateString("es-CL", { weekday: "long", day: "numeric" })}
+                    </span>
+                    {isCheckbox ? (
+                      <div className={`a-check ${activeQty >= 1 ? "done" : ""}`} style={{ width: 26, height: 26 }} onClick={() => setQtyFor(activeIso, activeQty >= 1 ? 0 : 1)}>
+                        {activeQty >= 1 && <Check size={14} />}
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <button className="a-btn secondary xs" onClick={() => setQtyFor(activeIso, activeQty - 1)}>−</button>
+                        <span className="agenda-mono" style={{ minWidth: 60, textAlign: "center" }}>{activeQty}/{h.targetQty} {h.unit}</span>
+                        <button className="a-btn secondary xs" onClick={() => setQtyFor(activeIso, activeQty + 1)}>+</button>
+                      </div>
+                    )}
+                  </div>
+                  {h.targetQty > 1 && (
+                    <div style={{ marginTop: 12 }}>
+                      <div className="a-row" style={{ marginBottom: 4 }}>
+                        <span className="a-sub" style={{ margin: 0 }}>Acumulado de la semana</span>
+                        <span className="agenda-mono a-sub" style={{ margin: 0 }}>{wp.weekTotal}/{weeklyTarget} {h.unit} · {weeklyTarget ? Math.round((wp.weekTotal / weeklyTarget) * 100) : 0}%</span>
+                      </div>
+                      <div style={{ height: 6, background: "var(--line)", borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${weeklyTarget ? Math.min(100, (wp.weekTotal / weeklyTarget) * 100) : 0}%`, background: "var(--butter)" }} />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           );
         })}
@@ -1350,6 +1489,7 @@ function EntrenamientoTab({ data, patch }) {
 
 /* ================= DIARIO (tarjetas de colores como Notas, sin bug de emojis, historial completo) ================= */
 const MOODS = ["😊", "😌", "😐", "😔", "😤", "🥳"];
+const MOOD_LABELS = { "😊": "Alegre", "😌": "Tranquilo", "😐": "Neutral", "😔": "Triste", "😤": "Frustrado", "🥳": "Feliz" };
 const MOOD_COLORS = { "😊": "#fde9c8", "😌": "#e3f0d8", "😐": "#dceaf7", "😔": "#ece0f7", "😤": "#fbe3ea", "🥳": "#fde9c8" };
 
 function DiarioTab({ data, patch }) {
@@ -1388,11 +1528,12 @@ function DiarioTab({ data, patch }) {
 
         <div style={{ marginBottom: 14 }}>
           <div className="a-stat-label">¿Cómo te sientes hoy?</div>
-          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
             {MOODS.map((m) => (
               <button key={m} type="button" onClick={() => updateField("mood", m)}
-                style={{ fontSize: 20, background: entry.mood === m ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)", border: entry.mood === m ? "1px solid var(--sage)" : "1px solid var(--line)", borderRadius: 10, width: 42, height: 42, cursor: "pointer" }}>
+                style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, fontSize: 20, background: entry.mood === m ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.4)", border: entry.mood === m ? "1px solid var(--sage)" : "1px solid var(--line)", borderRadius: 10, padding: "6px 8px", cursor: "pointer" }}>
                 {m}
+                <span style={{ fontSize: 9.5, fontWeight: 600, color: "var(--text-soft)" }}>{MOOD_LABELS[m]}</span>
               </button>
             ))}
           </div>
@@ -1416,6 +1557,7 @@ function DiarioTab({ data, patch }) {
             {Object.entries(moodCounts).map(([m, c]) => (
               <div key={m} style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 22 }}>{m}</div>
+                <div className="a-sub" style={{ margin: 0, fontWeight: 600 }}>{MOOD_LABELS[m]}</div>
                 <div className="agenda-mono a-sub" style={{ margin: 0 }}>{c} día{c !== 1 ? "s" : ""}</div>
               </div>
             ))}
@@ -1660,10 +1802,10 @@ function PomodoroTab({ secondsLeft, running, mode, cycles, total, toggle, reset 
       <h1 className="a-h1 agenda-serif">Pomodoro</h1>
       <p className="a-sub">25 min de foco, 5 min de descanso. Sigue corriendo aunque cambies de sección.</p>
       <div className="a-card" style={{ textAlign: "center", padding: "40px 20px" }}>
-        <div style={{ margin: "0 auto 20px" }}>
-          <Ring pct={1 - secondsLeft / total} size={180} color={mode === "work" ? "var(--sage)" : "var(--butter)"} />
+        <div style={{ position: "relative", width: 180, height: 180, margin: "0 auto 20px" }}>
+          <Ring pct={1 - secondsLeft / total} size={180} color={mode === "work" ? "var(--sage)" : "var(--butter)"} showLabel={false} />
+          <div className="agenda-mono" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, fontWeight: 700 }}>{mm}:{ss}</div>
         </div>
-        <div className="agenda-mono" style={{ fontSize: 40, fontWeight: 700, marginTop: -140, marginBottom: 120 }}>{mm}:{ss}</div>
         <div className="a-pill in" style={{ marginBottom: 20 }}>{mode === "work" ? "Foco" : "Descanso"}</div>
         <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
           <button className="a-btn" onClick={toggle}>{running ? <Pause size={14} /> : <Play size={14} />} {running ? "Pausar" : "Iniciar"}</button>
@@ -1757,8 +1899,9 @@ function ExportPanel({ data }) {
   const exportHabits = () => {
     const rows = [];
     data.habits.forEach((h) => {
+      const meta = h.mode === "weekly" ? h.targetCount : h.targetQty;
       Object.entries(h.log).forEach(([date, qty]) => {
-        rows.push({ habito: h.name, fecha: date, cantidad: qty, meta: h.targetQty, cumplido: qty >= h.targetQty ? "sí" : "no" });
+        rows.push({ habito: h.name, modo: h.mode || "daily", fecha: date, cantidad: qty, meta, unidad: h.unit || "", cumplido: qty >= meta ? "sí" : "no" });
       });
     });
     downloadFile("habitos-sanorganic.csv", toCSV(rows), "text/csv;charset=utf-8;");
@@ -1775,6 +1918,79 @@ function ExportPanel({ data }) {
         <button className="a-btn secondary xs" onClick={exportTransactions}>Movimientos financieros (.csv)</button>
         <button className="a-btn secondary xs" onClick={exportHabits}>Registro de hábitos (.csv)</button>
         <button className="a-btn secondary xs" onClick={exportBackup}>Respaldo completo (.json)</button>
+      </div>
+    </div>
+  );
+}
+
+/* ================= AJUSTES (personalización y datos) ================= */
+function AjustesTab({ data, patch, setData }) {
+  const [wallpaperInput, setWallpaperInput] = useState(data.wallpaper || "");
+  const fileInputRef = useRef(null);
+
+  const saveName = (name) => patch(() => ({ name }));
+  const saveWallpaper = () => patch(() => ({ wallpaper: wallpaperInput.trim() }));
+  const clearWallpaper = () => { setWallpaperInput(""); patch(() => ({ wallpaper: "" })); };
+
+  const importBackup = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result);
+        if (!confirm("Esto va a reemplazar todos tus datos actuales con los del respaldo. ¿Continuar?")) return;
+        setData({ ...defaultData(), ...parsed });
+        alert("Respaldo importado correctamente.");
+      } catch {
+        alert("No se pudo leer ese archivo. Asegúrate de que sea un respaldo .json exportado desde esta misma agenda.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const resetAll = () => {
+    if (!confirm("Esto borra TODOS tus datos (hábitos, finanzas, notas, todo) y no se puede deshacer. ¿Seguro que quieres continuar?")) return;
+    setData(defaultData());
+  };
+
+  return (
+    <div>
+      <h1 className="a-h1 agenda-serif">Ajustes</h1>
+      <p className="a-sub">Personalización y gestión de tus datos.</p>
+
+      <div className="a-card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Tu nombre</h3>
+        <input className="a-input" placeholder="¿Cómo quieres que te salude la agenda?" value={data.name} onChange={(e) => saveName(e.target.value)} style={{ maxWidth: 320 }} />
+      </div>
+
+      <div className="a-card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0, fontSize: 14.5 }}><ImageIcon size={15} style={{ verticalAlign: -2 }} /> Fondo de pantalla</h3>
+        <p className="a-sub">Pega el link de una imagen (ej. de Unsplash) para usarla de fondo detrás de la agenda.</p>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+          <input className="a-input" placeholder="https://..." value={wallpaperInput} onChange={(e) => setWallpaperInput(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
+          <button className="a-btn secondary xs" onClick={saveWallpaper}>Aplicar</button>
+          {data.wallpaper && <button className="a-btn danger xs" onClick={clearWallpaper}>Quitar fondo</button>}
+        </div>
+        {data.wallpaper && (
+          <img src={data.wallpaper} alt="Vista previa del fondo" style={{ maxWidth: "100%", maxHeight: 140, borderRadius: 10, border: "1px solid var(--line)" }} />
+        )}
+      </div>
+
+      <div className="a-card">
+        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Gestión de datos</h3>
+        <p className="a-sub">Todo se guarda en este navegador. Exporta un respaldo de vez en cuando por seguridad, o impórtalo si cambias de computador.</p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="a-btn secondary xs" onClick={() => downloadFile("respaldo-agenda-sanorganic.json", JSON.stringify(data, null, 2), "application/json")}>
+            <Download size={13} /> Exportar respaldo (.json)
+          </button>
+          <button className="a-btn secondary xs" onClick={() => fileInputRef.current?.click()}>
+            <Upload size={13} /> Importar respaldo
+          </button>
+          <input ref={fileInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={importBackup} />
+          <button className="a-btn danger xs" onClick={resetAll}>Restaurar a valores por defecto</button>
+        </div>
       </div>
     </div>
   );
