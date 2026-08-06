@@ -212,6 +212,28 @@ const GlobalStyle = () => (
     .a-grid-2 { grid-template-columns:repeat(2,1fr); }
     .a-grid-4 { grid-template-columns:repeat(4,1fr); }
     .a-grid-7 { grid-template-columns:repeat(7,1fr); }
+    .a-week-event { font-size:12.5px; }
+
+    /* Grilla horaria semanal (escritorio) */
+    .a-hourgrid-desktop { display:block; margin-bottom:16px; }
+    .a-daygrid-mobile { display:none; }
+    .a-hourgrid { display:grid; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--bg-card); }
+    .a-hourgrid-corner { background:var(--bg-card-2); border-bottom:1px solid var(--line); border-right:1px solid var(--line); }
+    .a-hourgrid-daylabel { background:var(--bg-card-2); border-bottom:1px solid var(--line); border-right:1px solid var(--line);
+      font-size:11.5px; font-weight:700; text-transform:capitalize; text-align:center; padding:8px 4px; }
+    .a-hourgrid-daylabel:last-child, .a-hourgrid-cell:last-child { border-right:none; }
+    .a-hourgrid-hourlabel { border-top:1px solid var(--line); border-right:1px solid var(--line); background:var(--bg-card-2);
+      font-size:10.5px; color:var(--text-soft); padding:6px 4px; text-align:right; font-family:'IBM Plex Mono',monospace; }
+    .a-hourgrid-cell { border-top:1px solid var(--line); border-right:1px solid var(--line); min-height:30px; padding:2px; cursor:pointer; transition:background .1s; }
+    .a-hourgrid-cell:hover { background:var(--bg-card-2); }
+    .a-hourgrid-event { font-size:10px; background:var(--sage); color:#fff; border-radius:5px; padding:2px 5px; margin-bottom:2px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* Agenda de un día (celular) */
+    .a-daygrid-row { display:flex; border-bottom:1px solid var(--line); padding:8px 10px; gap:10px; cursor:pointer; }
+    .a-daygrid-row:last-child { border-bottom:none; }
+    .a-daygrid-hour { font-size:12px; color:var(--text-soft); font-family:'IBM Plex Mono',monospace; width:48px; flex-shrink:0; padding-top:2px; }
+    .a-daygrid-content { flex:1; }
+    .a-daygrid-placeholder { color:var(--text-faint); font-size:13px; }
 
     .a-stat-label { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-soft); margin-bottom:6px;}
     .a-stat-num { font-size:22px; font-weight:600; }
@@ -273,6 +295,10 @@ const GlobalStyle = () => (
       .a-main { max-height:none; padding:18px 16px 90px; }
       .a-grid-3, .a-grid-4, .a-grid-2 { grid-template-columns:1fr; }
       .a-grid-7 { grid-template-columns:repeat(7,minmax(34px,1fr)); }
+      .a-week-event { font-size:14.5px; }
+      .a-h1 { font-size:22px; }
+      .a-hourgrid-desktop { display:none; }
+      .a-daygrid-mobile { display:block; }
     }
   `}</style>
 );
@@ -1680,19 +1706,29 @@ function NotasTab({ data, patch }) {
 function CalendarioTab({ data, patch }) {
   const [view, setView] = useState("semana");
   const [refDate, setRefDate] = useState(todayISO());
+  const [mobileDay, setMobileDay] = useState(todayISO());
   const [formDate, setFormDate] = useState(todayISO());
   const [time, setTime] = useState("");
   const [title, setTitle] = useState("");
+  const [startHour, setStartHour] = useState(8);
+  const [endHour, setEndHour] = useState(20);
 
-  const addEvent = () => {
+  const addEvent = (presetTime) => {
     if (!title.trim()) return;
     patch((d) => ({
-      calendarEvents: { ...(d.calendarEvents || {}), [formDate]: [...((d.calendarEvents || {})[formDate] || []), { id: uid(), title, time }] },
+      calendarEvents: { ...(d.calendarEvents || {}), [formDate]: [...((d.calendarEvents || {})[formDate] || []), { id: uid(), title, time: presetTime ?? time }] },
     }));
     setTitle(""); setTime("");
   };
   const delEvent = (date, id) => {
     patch((d) => ({ calendarEvents: { ...(d.calendarEvents || {}), [date]: (d.calendarEvents?.[date] || []).filter((e) => e.id !== id) } }));
+  };
+  const quickAdd = (iso, hour) => {
+    const t = prompt(`Nuevo evento el ${iso} a las ${String(hour).padStart(2, "0")}:00 — escribe el título:`);
+    if (!t || !t.trim()) return;
+    patch((d) => ({
+      calendarEvents: { ...(d.calendarEvents || {}), [iso]: [...((d.calendarEvents || {})[iso] || []), { id: uid(), title: t.trim(), time: `${String(hour).padStart(2, "0")}:00` }] },
+    }));
   };
 
   const weekStart = startOfWeek(refDate);
@@ -1704,6 +1740,11 @@ function CalendarioTab({ data, patch }) {
   const monthCells = Array.from({ length: 42 }, (_, i) => addDays(monthGridStart, i));
 
   const eventsFor = (iso) => (data.calendarEvents?.[iso] || []).slice().sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+  const hours = [];
+  for (let h = startHour; h <= endHour; h++) hours.push(h);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const eventsAtHour = (iso, h) => eventsFor(iso).filter((e) => e.time && parseInt(e.time.split(":")[0], 10) === h);
+  const untimedEvents = (iso) => eventsFor(iso).filter((e) => !e.time);
 
   return (
     <div>
@@ -1725,8 +1766,21 @@ function CalendarioTab({ data, patch }) {
           <input className="a-input" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
           <input className="a-input" placeholder="Título del evento" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addEvent()} />
         </div>
-        <button className="a-btn" onClick={addEvent}><Plus size={14} /> Agregar evento</button>
+        <button className="a-btn" onClick={() => addEvent()}><Plus size={14} /> Agregar evento</button>
       </div>
+
+      {view === "semana" && (
+        <div className="a-card" style={{ marginBottom: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span className="a-sub" style={{ margin: 0 }}>Rango horario:</span>
+          <select className="a-select" style={{ width: "auto" }} value={startHour} onChange={(e) => setStartHour(parseInt(e.target.value))}>
+            {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{pad2(h)}:00</option>)}
+          </select>
+          <span className="a-sub" style={{ margin: 0 }}>a</span>
+          <select className="a-select" style={{ width: "auto" }} value={endHour} onChange={(e) => setEndHour(parseInt(e.target.value))}>
+            {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{pad2(h)}:00</option>)}
+          </select>
+        </div>
+      )}
 
       <div className="a-monthnav" style={{ marginBottom: 12 }}>
         <button onClick={() => setRefDate(toISO(addDays(new Date(refDate + "T00:00:00"), view === "semana" ? -7 : -30)))}><ChevronLeft size={15} /></button>
@@ -1737,21 +1791,80 @@ function CalendarioTab({ data, patch }) {
       </div>
 
       {view === "semana" && (
-        <div className="a-grid a-grid-7">
-          {weekDays.map((iso) => (
-            <div key={iso} className="a-card" style={{ padding: 10, minHeight: 140 }}>
-              <div className="a-sub" style={{ margin: "0 0 6px", fontWeight: 700, textTransform: "capitalize" }}>
-                {WEEKDAYS[new Date(iso + "T00:00:00").getDay()]} {iso.slice(8)}
-              </div>
-              {eventsFor(iso).map((e) => (
-                <div key={e.id} style={{ fontSize: 11, background: "var(--bg-card-2)", borderRadius: 6, padding: "3px 6px", marginBottom: 4, display: "flex", justifyContent: "space-between", gap: 4 }}>
-                  <span>{e.time ? `${e.time} ` : ""}{e.title}</span>
-                  <X size={10} style={{ cursor: "pointer", flexShrink: 0, marginTop: 2 }} onClick={() => delEvent(iso, e.id)} />
+        <>
+          {/* Grilla por horario — computador / tablet */}
+          <div className="a-hourgrid-desktop">
+            <div className="a-hourgrid" style={{ gridTemplateColumns: `64px repeat(7,1fr)` }}>
+              <div className="a-hourgrid-corner" />
+              {weekDays.map((iso) => (
+                <div key={iso} className="a-hourgrid-daylabel">{WEEKDAYS[new Date(iso + "T00:00:00").getDay()]} {iso.slice(8)}</div>
+              ))}
+
+              <div className="a-hourgrid-hourlabel">Todo el día</div>
+              {weekDays.map((iso) => (
+                <div key={iso} className="a-hourgrid-cell" onClick={() => setFormDate(iso)}>
+                  {untimedEvents(iso).map((e) => (
+                    <div key={e.id} className="a-hourgrid-event" onClick={(ev) => { ev.stopPropagation(); delEvent(iso, e.id); }} title="Clic para eliminar">{e.title}</div>
+                  ))}
                 </div>
               ))}
+
+              {hours.map((h) => (
+                <React.Fragment key={h}>
+                  <div className="a-hourgrid-hourlabel">{pad2(h)}:00</div>
+                  {weekDays.map((iso) => (
+                    <div key={iso} className="a-hourgrid-cell" onClick={() => quickAdd(iso, h)} title="Clic para agregar un evento">
+                      {eventsAtHour(iso, h).map((e) => (
+                        <div key={e.id} className="a-hourgrid-event" onClick={(ev) => { ev.stopPropagation(); delEvent(iso, e.id); }} title="Clic para eliminar">{e.time} {e.title}</div>
+                      ))}
+                    </div>
+                  ))}
+                </React.Fragment>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+
+          {/* Agenda del día — celular */}
+          <div className="a-daygrid-mobile">
+            <div className="a-monthnav" style={{ marginBottom: 12 }}>
+              <button onClick={() => setMobileDay(toISO(addDays(new Date(mobileDay + "T00:00:00"), -1)))}><ChevronLeft size={15} /></button>
+              <span className="agenda-mono" style={{ fontSize: 13, textTransform: "capitalize" }}>
+                {new Date(mobileDay + "T00:00:00").toLocaleDateString("es-CL", { weekday: "long", day: "numeric", month: "short" })}
+              </span>
+              <button onClick={() => setMobileDay(toISO(addDays(new Date(mobileDay + "T00:00:00"), 1)))}><ChevronRight size={15} /></button>
+            </div>
+            {untimedEvents(mobileDay).length > 0 && (
+              <div className="a-card" style={{ marginBottom: 10, padding: 10 }}>
+                <div className="a-sub" style={{ fontWeight: 700, margin: "0 0 6px" }}>Todo el día</div>
+                {untimedEvents(mobileDay).map((e) => (
+                  <div key={e.id} className="a-week-event" style={{ background: "var(--bg-card-2)", borderRadius: 6, padding: "6px 9px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>{e.title}</span>
+                    <X size={13} style={{ cursor: "pointer" }} onClick={() => delEvent(mobileDay, e.id)} />
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="a-card" style={{ padding: 0, overflow: "hidden" }}>
+              {hours.map((h) => {
+                const evs = eventsAtHour(mobileDay, h);
+                return (
+                  <div key={h} className="a-daygrid-row" onClick={() => { if (evs.length === 0) quickAdd(mobileDay, h); }}>
+                    <span className="a-daygrid-hour">{pad2(h)}:00</span>
+                    <div className="a-daygrid-content">
+                      {evs.length === 0 && <span className="a-daygrid-placeholder">···</span>}
+                      {evs.map((e) => (
+                        <div key={e.id} className="a-week-event" style={{ background: "var(--bg-card-2)", borderRadius: 6, padding: "4px 8px", marginBottom: 3, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span>{e.title}</span>
+                          <X size={12} style={{ cursor: "pointer" }} onClick={(ev) => { ev.stopPropagation(); delEvent(mobileDay, e.id); }} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
       )}
 
       {view === "mes" && (
