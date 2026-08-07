@@ -4,7 +4,7 @@ import {
   BarChart3, Plus, Trash2, ChevronLeft, ChevronRight, Target, PiggyBank,
   TrendingUp, TrendingDown, X, Check, Sparkles, Flag, FolderKanban, Circle,
   UtensilsCrossed, Dumbbell, Timer, Bell, Pencil, ArrowDownCircle, ArrowUpCircle,
-  Play, Pause, RotateCcw, ChefHat, Settings, Upload, Download, Image as ImageIcon
+  Play, Pause, RotateCcw, ChefHat, Settings, Upload, Download, Image as ImageIcon, Search
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -71,6 +71,39 @@ const habitWeekProgress = (h, today, weekStart) => {
     }
   }
   return { done, required: elapsedRequired, weekTotal, pct: elapsedRequired ? done / elapsedRequired : 0 };
+};
+
+/* Racha: días (o semanas) consecutivos cumpliendo el hábito, contando hacia atrás desde hoy */
+const habitStreak = (h, today) => {
+  if (h.mode === "weekly") {
+    let streak = 0;
+    let cursor = startOfWeek(today);
+    // si la semana actual aún no cumple la meta, no rompe la racha (puede estar en curso) — se evalúa desde la semana anterior
+    let weekTotal = 0;
+    for (let i = 0; i < 7; i++) { const iso = toISO(addDays(cursor, i)); if (iso <= today) weekTotal += h.log[iso] || 0; }
+    if (weekTotal < h.targetCount) cursor = addDays(cursor, -7);
+    while (true) {
+      let total = 0;
+      for (let i = 0; i < 7; i++) total += h.log[toISO(addDays(cursor, i))] || 0;
+      if (total >= h.targetCount) { streak++; cursor = addDays(cursor, -7); } else break;
+      if (streak > 104) break;
+    }
+    return streak;
+  }
+  let streak = 0;
+  let cursor = new Date(today + "T00:00:00");
+  // si hoy es día objetivo y aún no se cumple, empezar a contar desde ayer (el día de hoy sigue en curso)
+  if (h.targetDays.includes(cursor.getDay()) && (h.log[today] || 0) < h.targetQty) cursor = addDays(cursor, -1);
+  while (true) {
+    const iso = toISO(cursor);
+    const isTarget = h.targetDays.includes(cursor.getDay());
+    if (isTarget) {
+      if ((h.log[iso] || 0) >= h.targetQty) { streak++; } else break;
+    }
+    cursor = addDays(cursor, -1);
+    if (streak > 730) break;
+  }
+  return streak;
 };
 
 const addDays = (date, n) => {
@@ -149,6 +182,7 @@ const defaultData = () => ({
   workouts: [], // {id,date,type,duration,notes}
   reminders: [], // {id,text,datetime,done}
   wallpaper: "", // URL de imagen de fondo (opcional)
+  darkMode: false,
 });
 
 function useLocalState() {
@@ -183,6 +217,15 @@ const GlobalStyle = () => (
       background:var(--bg); color:var(--text);
       min-height:100vh; display:flex; border-radius:18px; overflow:hidden;
       box-shadow: 0 20px 60px rgba(150,41,76,0.14);
+    }
+    .agenda-root.dark {
+      --bg:#1c1418; --bg-card:#241a1f; --bg-card-2:#2e2126;
+      --line: rgba(242,220,228,0.10);
+      --sage:#e0a0b8; --sage-dim: rgba(224,160,184,0.15);
+      --butter:#d98aa3; --butter-dim: rgba(217,138,163,0.16);
+      --clay:#c98a94; --clay-dim: rgba(201,138,148,0.15);
+      --text:#f3e8ea; --text-soft:#b599a1; --text-faint:#7d6169;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
     }
     .agenda-root * { box-sizing:border-box; }
     .agenda-serif { font-family:'Fraunces', serif; }
@@ -227,6 +270,7 @@ const GlobalStyle = () => (
     .a-hourgrid-cell { border-top:1px solid var(--line); border-right:1px solid var(--line); min-height:30px; padding:2px; cursor:pointer; transition:background .1s; }
     .a-hourgrid-cell:hover { background:var(--bg-card-2); }
     .a-hourgrid-event { font-size:10px; background:var(--sage); color:#fff; border-radius:5px; padding:2px 5px; margin-bottom:2px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .agenda-root.dark .a-hourgrid-event { color:#1c1418; }
 
     /* Agenda de un día (celular) */
     .a-daygrid-row { display:flex; border-bottom:1px solid var(--line); padding:8px 10px; gap:10px; cursor:pointer; }
@@ -241,11 +285,19 @@ const GlobalStyle = () => (
     .a-monthcell:hover { background:var(--bg-card-2); }
     .a-monthcell.today { border:2px solid var(--sage); font-weight:700; color:var(--sage); }
     .a-monthcell.selected { background:var(--sage); color:#fff; border-color:var(--sage); }
+    .agenda-root.dark .a-monthcell.selected { color:#1c1418; }
     .a-monthcell.selected.today { color:#fff; }
     .a-monthdot { width:5px; height:5px; border-radius:50%; background:var(--butter); }
     .a-monthcell.selected .a-monthdot { background:#fff; }
 
     .a-stat-label { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-soft); margin-bottom:6px;}
+
+    .a-switch { position:relative; display:inline-block; width:44px; height:24px; flex-shrink:0; cursor:pointer; }
+    .a-switch input { opacity:0; width:0; height:0; position:absolute; }
+    .a-switch-track { position:absolute; inset:0; background:var(--line); border-radius:999px; transition:background .15s; }
+    .a-switch-thumb { position:absolute; top:3px; left:3px; width:18px; height:18px; background:#fff; border-radius:50%; transition:transform .15s; box-shadow:0 1px 3px rgba(0,0,0,0.25); }
+    .a-switch input:checked + .a-switch-track { background:var(--sage); }
+    .a-switch input:checked + .a-switch-track .a-switch-thumb { transform:translateX(20px); }
     .a-stat-num { font-size:22px; font-weight:600; }
 
     .a-input, .a-select, textarea.a-input {
@@ -265,6 +317,7 @@ const GlobalStyle = () => (
     .a-btn.danger { background:var(--clay-dim); color:var(--clay); }
     .a-btn.icon { padding:8px; }
     .a-btn.xs { padding:5px 10px; font-size:11px; }
+    .agenda-root.dark .a-btn:not(.secondary):not(.danger) { color:#1c1418; }
 
     .a-pill { font-size:10.5px; padding:3px 9px; border-radius:999px; font-weight:700; letter-spacing:.02em;}
     .a-pill.in { background:var(--sage-dim); color:var(--sage); }
@@ -289,6 +342,7 @@ const GlobalStyle = () => (
     .a-check { width:19px; height:19px; border-radius:6px; border:1.5px solid var(--text-faint);
       display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; }
     .a-check.done { background:var(--sage); border-color:var(--sage); color:#fff; }
+    .agenda-root.dark .a-check.done { color:#1c1418; }
 
     .a-daychip { width:28px; height:28px; border-radius:8px; border:1px solid var(--line); background:var(--bg);
       display:flex; align-items:center; justify-content:center; font-size:10.5px; cursor:pointer; color:var(--text-soft); }
@@ -309,6 +363,27 @@ const GlobalStyle = () => (
       .a-h1 { font-size:22px; }
       .a-hourgrid-desktop { display:none; }
       .a-daygrid-mobile { display:block; }
+
+      /* Letra más grande en general para celular (!important para ganarle a los tamaños puestos en línea) */
+      .a-sub { font-size:14.5px !important; }
+      .a-input, .a-select, textarea.a-input { font-size:15px; padding:10px 12px; }
+      .a-btn { font-size:14px; padding:10px 16px; }
+      .a-btn.xs { font-size:12.5px !important; padding:7px 12px; }
+      .a-stat-label { font-size:12px !important; }
+      .a-stat-num { font-size:24px; }
+      .a-pill { font-size:12px !important; }
+      .a-list-item { font-size:15px; }
+      .a-note p, .a-note div { font-size:14px; }
+      .a-hourgrid-event { font-size:12px !important; }
+      .a-monthcell { font-size:15px !important; }
+      .a-hourgrid-daylabel { font-size:13px !important; }
+      .a-hourgrid-hourlabel { font-size:12.5px !important; }
+      .a-daygrid-hour { font-size:14px !important; }
+      .a-daygrid-placeholder { font-size:14px !important; }
+      .a-tag { font-size:12px !important; }
+      .a-daychip { font-size:12.5px !important; width:32px; height:32px; }
+      .agenda-mono { font-size:inherit; }
+      h3 { font-size:16px !important; }
     }
   `}</style>
 );
@@ -389,8 +464,24 @@ export default function AgendaApp() {
   const [tab, setTab] = useState("inicio");
   const [month, setMonth] = useState(currentMonthKey());
   const [financeTab, setFinanceTab] = useState("resumen");
+  const [searchQuery, setSearchQuery] = useState("");
   const pomodoro = usePomodoro();
   const notifiedRef = useRef(new Set());
+
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    const out = [];
+    data.notes.forEach((n) => { if (n.title.toLowerCase().includes(q) || (n.content || "").toLowerCase().includes(q)) out.push({ icon: StickyNote, label: n.title || "(sin título)", sub: "Nota", tab: "notas" }); });
+    data.recipes.forEach((r) => { if (r.name.toLowerCase().includes(q)) out.push({ icon: ChefHat, label: r.name, sub: "Receta", tab: "comidas" }); });
+    data.transactions.forEach((t) => { if (t.concept.toLowerCase().includes(q)) out.push({ icon: Wallet, label: t.concept, sub: `Finanzas · ${t.date}`, tab: "finanzas" }); });
+    data.objectives.forEach((o) => { if (o.title.toLowerCase().includes(q)) out.push({ icon: Flag, label: o.title, sub: "Meta", tab: "objetivos" }); });
+    data.projects.forEach((p) => { if (p.name.toLowerCase().includes(q)) out.push({ icon: FolderKanban, label: p.name, sub: "Proyecto", tab: "proyectos" }); });
+    data.habits.forEach((h) => { if (h.name.toLowerCase().includes(q)) out.push({ icon: Repeat, label: h.name, sub: "Hábito", tab: "habitos" }); });
+    Object.entries(data.calendarEvents || {}).forEach(([date, evs]) => evs.forEach((e) => { if (e.title.toLowerCase().includes(q)) out.push({ icon: Calendar, label: e.title, sub: `Evento · ${date}`, tab: "calendario" }); }));
+    data.reminders.forEach((r) => { if (r.text.toLowerCase().includes(q)) out.push({ icon: Bell, label: r.text, sub: "Recordatorio", tab: "recordatorios" }); });
+    return out.slice(0, 8);
+  }, [searchQuery, data]);
 
   const patch = (fn) => setData((d) => ({ ...d, ...fn(d) }));
 
@@ -472,7 +563,7 @@ export default function AgendaApp() {
   }, [data.calendarEvents]);
 
   return (
-    <div className="agenda-root">
+    <div className={`agenda-root ${data.darkMode ? "dark" : ""}`}>
       <GlobalStyle />
       <nav className="a-nav">
         {NAV.map((n) => {
@@ -490,8 +581,35 @@ export default function AgendaApp() {
       </nav>
 
       <main className="a-main">
+        <div style={{ position: "relative", marginBottom: 18 }}>
+          <div style={{ position: "relative" }}>
+            <Search size={15} color="var(--text-faint)" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+            <input
+              className="a-input" placeholder="Buscar notas, recetas, movimientos, eventos..."
+              value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ paddingLeft: 34 }}
+            />
+          </div>
+          {searchQuery.trim() && (
+            <div className="a-card" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 50, padding: 8, maxHeight: 320, overflowY: "auto" }}>
+              {searchResults.length === 0 && <p className="a-sub" style={{ margin: "6px 10px" }}>Sin resultados para "{searchQuery}".</p>}
+              {searchResults.map((r, i) => {
+                const Icon = r.icon;
+                return (
+                  <div key={i} className="a-list-item" style={{ cursor: "pointer", padding: "8px 10px" }} onClick={() => { setTab(r.tab); setSearchQuery(""); }}>
+                    <Icon size={14} color="var(--text-soft)" />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13 }}>{r.label}</div>
+                      <div className="a-sub" style={{ margin: 0, fontSize: 11 }}>{r.sub}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
         {tab === "inicio" && (
-          <InicioTab data={data} todayList={todayList} progressPct={progressPct} ingresosMes={ingresosMes} egresosMes={egresosMes}
+          <InicioTab data={data} patch={patch} todayList={todayList} progressPct={progressPct} ingresosMes={ingresosMes} egresosMes={egresosMes}
             month={month} goalProgress={goalProgress} goToFinanzas={() => setTab("finanzas")} upcomingEvents={upcomingEvents} />
         )}
         {tab === "prioridades" && <PrioridadesTab list={todayList} onAdd={addPriority} onToggle={togglePriority} onDelete={delPriority} />}
@@ -518,9 +636,10 @@ export default function AgendaApp() {
 }
 
 /* ================= INICIO ================= */
-function InicioTab({ data, todayList, progressPct, ingresosMes, egresosMes, month, goalProgress, goToFinanzas, upcomingEvents }) {
+function InicioTab({ data, patch, todayList, progressPct, ingresosMes, egresosMes, month, goalProgress, goToFinanzas, upcomingEvents }) {
   const topGoals = data.goals.slice(0, 2);
   const [now, setNow] = useState(new Date());
+  const [quickAdd, setQuickAdd] = useState(null); // 'ingreso' | 'egreso' | 'nota' | 'evento' | null
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
@@ -540,7 +659,15 @@ function InicioTab({ data, todayList, progressPct, ingresosMes, egresosMes, mont
           <div className="agenda-mono" style={{ fontSize: 20, fontWeight: 700 }}>{timeLabel}</div>
         </div>
       </div>
-      <div style={{ marginBottom: 20 }} />
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0 20px" }}>
+        <button className="a-btn xs" onClick={() => setQuickAdd("ingreso")}><Plus size={12} /> Ingreso</button>
+        <button className="a-btn secondary xs" onClick={() => setQuickAdd("egreso")}><Plus size={12} /> Gasto</button>
+        <button className="a-btn secondary xs" onClick={() => setQuickAdd("nota")}><Plus size={12} /> Nota</button>
+        <button className="a-btn secondary xs" onClick={() => setQuickAdd("evento")}><Plus size={12} /> Evento</button>
+      </div>
+
+      {quickAdd && <QuickAddModal type={quickAdd} data={data} patch={patch} onClose={() => setQuickAdd(null)} />}
 
       <div className="a-grid a-grid-3" style={{ marginBottom: 16 }}>
         <div className="a-card">
@@ -609,6 +736,76 @@ function InicioTab({ data, todayList, progressPct, ingresosMes, egresosMes, mont
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ================= QUICK ADD (atajos desde Inicio) ================= */
+function QuickAddModal({ type, data, patch, onClose }) {
+  const [concept, setConcept] = useState("");
+  const [amount, setAmount] = useState("");
+  const [category, setCategory] = useState(data.categories[type === "egreso" ? "egreso" : "ingreso"]?.[0] || "");
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [evDate, setEvDate] = useState(todayISO());
+  const [evTime, setEvTime] = useState("");
+
+  const titles = { ingreso: "Nuevo ingreso", egreso: "Nuevo gasto", nota: "Nueva nota", evento: "Nuevo evento" };
+
+  const save = () => {
+    if (type === "ingreso" || type === "egreso") {
+      const amt = parseFloat(amount);
+      if (!concept.trim() || !amt) return;
+      patch((d) => ({ transactions: [{ id: uid(), type, concept, amount: amt, category, date: todayISO() }, ...d.transactions] }));
+    } else if (type === "nota") {
+      if (!title.trim()) return;
+      patch((d) => ({ notes: [{ id: uid(), title, content, date: todayISO(), color: "#ffffff", done: false, tags: [] }, ...d.notes] }));
+    } else if (type === "evento") {
+      if (!title.trim()) return;
+      patch((d) => ({ calendarEvents: { ...(d.calendarEvents || {}), [evDate]: [...((d.calendarEvents || {})[evDate] || []), { id: uid(), title, time: evTime }] } }));
+    }
+    onClose();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(20,10,14,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }} onClick={onClose}>
+      <div className="a-card" style={{ width: "100%", maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+        <div className="a-row" style={{ marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 15 }}>{titles[type]}</h3>
+          <X size={16} style={{ cursor: "pointer" }} onClick={onClose} />
+        </div>
+
+        {(type === "ingreso" || type === "egreso") && (
+          <>
+            <input className="a-input" placeholder="Concepto" value={concept} onChange={(e) => setConcept(e.target.value)} style={{ marginBottom: 8 }} autoFocus />
+            <div className="a-grid a-grid-2" style={{ marginBottom: 8 }}>
+              <input className="a-input" type="number" placeholder="Monto" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              <select className="a-select" value={category} onChange={(e) => setCategory(e.target.value)}>
+                {(data.categories[type] || []).map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </>
+        )}
+
+        {type === "nota" && (
+          <>
+            <input className="a-input" placeholder="Título" value={title} onChange={(e) => setTitle(e.target.value)} style={{ marginBottom: 8 }} autoFocus />
+            <textarea className="a-input" rows={3} placeholder="Contenido..." value={content} onChange={(e) => setContent(e.target.value)} style={{ marginBottom: 8, fontFamily: "inherit" }} />
+          </>
+        )}
+
+        {type === "evento" && (
+          <>
+            <input className="a-input" placeholder="Título del evento" value={title} onChange={(e) => setTitle(e.target.value)} style={{ marginBottom: 8 }} autoFocus />
+            <div className="a-grid a-grid-2" style={{ marginBottom: 8 }}>
+              <input className="a-input" type="date" value={evDate} onChange={(e) => setEvDate(e.target.value)} />
+              <input className="a-input" type="time" value={evTime} onChange={(e) => setEvTime(e.target.value)} />
+            </div>
+          </>
+        )}
+
+        <button className="a-btn" onClick={save} style={{ width: "100%", justifyContent: "center" }}>Guardar</button>
+      </div>
     </div>
   );
 }
@@ -729,7 +926,10 @@ function HabitosTab({ data, patch }) {
                 <div style={{ display: "flex", gap: 12 }}>
                   <Ring pct={wp.pct} size={58} color={wp.pct >= 1 ? "var(--sage)" : "var(--butter)"} />
                   <div>
-                    <div style={{ fontWeight: 600 }}>{h.emoji} {h.name}</div>
+                    <div className="a-row" style={{ gap: 6, justifyContent: "flex-start" }}>
+                      <span style={{ fontWeight: 600 }}>{h.emoji} {h.name}</span>
+                      {habitStreak(h, today) > 0 && <span className="a-pill ahorro">🔥 {habitStreak(h, today)}</span>}
+                    </div>
                     {isWeekly ? (
                       <div className="a-sub" style={{ margin: 0 }}>{wp.weekTotal}/{h.targetCount} {h.unit || "veces"} esta semana</div>
                     ) : (
@@ -2109,6 +2309,19 @@ function AjustesTab({ data, patch, setData }) {
       <div className="a-card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Tu nombre</h3>
         <input className="a-input" placeholder="¿Cómo quieres que te salude la agenda?" value={data.name} onChange={(e) => saveName(e.target.value)} style={{ maxWidth: 320 }} />
+      </div>
+
+      <div className="a-card" style={{ marginBottom: 16 }}>
+        <div className="a-row">
+          <div>
+            <h3 style={{ margin: 0, fontSize: 14.5 }}>Modo oscuro</h3>
+            <p className="a-sub" style={{ margin: "4px 0 0" }}>Cambia la paleta clara por una versión oscura, mismos tonos rosados.</p>
+          </div>
+          <label className="a-switch">
+            <input type="checkbox" checked={!!data.darkMode} onChange={(e) => patch(() => ({ darkMode: e.target.checked }))} />
+            <span className="a-switch-track"><span className="a-switch-thumb" /></span>
+          </label>
+        </div>
       </div>
 
       <div className="a-card" style={{ marginBottom: 16 }}>
