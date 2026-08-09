@@ -488,15 +488,19 @@ export default function AgendaApp() {
   /* ---------- avisos del navegador para recordatorios vencidos (persiste entre pestañas) ---------- */
   useEffect(() => {
     const check = () => {
-      if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-      const now = new Date();
-      data.reminders.forEach((r) => {
-        if (r.done || !r.datetime || notifiedRef.current.has(r.id)) return;
-        if (new Date(r.datetime) <= now) {
-          new Notification("Recordatorio — Mi Agenda", { body: r.text });
-          notifiedRef.current.add(r.id);
-        }
-      });
+      try {
+        if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+        const now = new Date();
+        data.reminders.forEach((r) => {
+          if (r.done || !r.datetime || notifiedRef.current.has(r.id)) return;
+          if (new Date(r.datetime) <= now) {
+            new Notification("Recordatorio — Mi Agenda", { body: r.text });
+            notifiedRef.current.add(r.id);
+          }
+        });
+      } catch {
+        /* algunos navegadores restringen la API de notificaciones; lo ignoramos */
+      }
     };
     check();
     const interval = setInterval(check, 30000);
@@ -2177,7 +2181,13 @@ function RecordatoriosTab({ data, patch }) {
   const delReminder = (id) => patch((d) => ({ reminders: d.reminders.filter((r) => r.id !== id) }));
 
   const sorted = [...data.reminders].sort((a, b) => (a.datetime || "").localeCompare(b.datetime || ""));
-  const [notifStatus, setNotifStatus] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
+  const [notifStatus, setNotifStatus] = useState(() => {
+    try {
+      return typeof Notification !== "undefined" ? Notification.permission : "unsupported";
+    } catch {
+      return "unsupported";
+    }
+  });
 
   const exportAllICS = () => {
     if (data.reminders.length === 0) { alert("No tienes recordatorios para exportar todavía."); return; }
@@ -2201,7 +2211,7 @@ function RecordatoriosTab({ data, patch }) {
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {notifStatus !== "unsupported" && notifStatus !== "granted" && (
-            <button className="a-btn secondary xs" onClick={() => Notification.requestPermission().then(setNotifStatus)}>
+            <button className="a-btn secondary xs" onClick={() => { try { Notification.requestPermission().then(setNotifStatus); } catch { alert("Este navegador no permite activar notificaciones."); } }}>
               <Bell size={13} /> Activar avisos en este navegador
             </button>
           )}
