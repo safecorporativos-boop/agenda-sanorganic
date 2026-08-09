@@ -212,7 +212,7 @@ const GlobalStyle = () => (
       --sage:#a23a5c; --sage-dim: rgba(162,58,92,0.11);
       --butter:#c96e8a; --butter-dim: rgba(201,110,138,0.14);
       --clay:#8a5762; --clay-dim: rgba(138,87,98,0.13);
-      --text:#3c2530; --text-soft:#8d6b76; --text-faint:#c6a4af;
+      --text:#3c2530; --text-soft:#6e4a54; --text-faint:#a97f8a;
       font-family:'Manrope',sans-serif;
       background:var(--bg); color:var(--text);
       min-height:100vh; display:flex; border-radius:18px; overflow:hidden;
@@ -649,7 +649,7 @@ function InicioTab({ data, patch, todayList, progressPct, ingresosMes, egresosMe
     return () => clearInterval(t);
   }, []);
   const dayLabel = now.toLocaleDateString("es-CL", { weekday: "long", day: "numeric", month: "long" });
-  const timeLabel = now.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const timeLabel = now.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
   return (
     <div>
@@ -893,8 +893,13 @@ function HabitosTab({ data, patch }) {
 
         {mode === "daily" ? (
           <>
-            <div className="a-grid a-grid-2" style={{ marginBottom: 10 }}>
-              <input className="a-input" type="number" min={1} placeholder="Cantidad diaria (ej: 3 vasos, 30 min)" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 1)} />
+            <div style={{ marginBottom: 10 }}>
+              <div className="a-stat-label">Cantidad diaria (ej: 3 vasos, 30 min)</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button type="button" className="a-btn secondary xs" onClick={() => setQty((q) => Math.max(1, q - 1))}>−</button>
+                <input className="a-input" type="number" min={1} style={{ textAlign: "center", maxWidth: 90 }} value={qty} onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))} />
+                <button type="button" className="a-btn secondary xs" onClick={() => setQty((q) => q + 1)}>+</button>
+              </div>
             </div>
             <div className="a-stat-label">Días de la semana</div>
             <div style={{ display: "flex", gap: 6, margin: "6px 0 12px" }}>
@@ -904,8 +909,13 @@ function HabitosTab({ data, patch }) {
             </div>
           </>
         ) : (
-          <div className="a-grid a-grid-2" style={{ marginBottom: 10 }}>
-            <input className="a-input" type="number" min={1} placeholder="Veces por semana (ej: 3)" value={weeklyCount} onChange={(e) => setWeeklyCount(parseInt(e.target.value) || 1)} />
+          <div style={{ marginBottom: 10 }}>
+            <div className="a-stat-label">Veces por semana (ej: 3)</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button type="button" className="a-btn secondary xs" onClick={() => setWeeklyCount((q) => Math.max(1, q - 1))}>−</button>
+              <input className="a-input" type="number" min={1} style={{ textAlign: "center", maxWidth: 90 }} value={weeklyCount} onChange={(e) => setWeeklyCount(Math.max(1, parseInt(e.target.value) || 1))} />
+              <button type="button" className="a-btn secondary xs" onClick={() => setWeeklyCount((q) => q + 1)}>+</button>
+            </div>
           </div>
         )}
         <button className="a-btn" onClick={addHabit}><Plus size={14} /> Crear hábito</button>
