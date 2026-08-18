@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { supabase } from "./supabaseClient";
 import {
   Home, ListChecks, Repeat, Wallet, BookOpen, StickyNote, Calendar,
   BarChart3, Plus, Trash2, ChevronLeft, ChevronRight, Target, PiggyBank,
   TrendingUp, TrendingDown, X, Check, Sparkles, Flag, FolderKanban, Circle,
   UtensilsCrossed, Dumbbell, Timer, Bell, Pencil, ArrowDownCircle, ArrowUpCircle,
-  Play, Pause, RotateCcw, ChefHat, Settings, Upload, Download, Image as ImageIcon, Search
+  Play, Pause, RotateCcw, ChefHat, Settings, Upload, Download, Image as ImageIcon, Search,
+  Cloud, CloudOff, LogOut, Loader2
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -185,7 +187,7 @@ const defaultData = () => ({
   darkMode: false,
 });
 
-function useLocalState() {
+function useSyncedState(userId) {
   const [data, setData] = useState(() => {
     try {
       const raw = typeof window !== "undefined" && window.localStorage ? localStorage.getItem(STORAGE_KEY) : null;
@@ -194,12 +196,56 @@ function useLocalState() {
       return defaultData();
     }
   });
+  const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | synced | offline | error
+  const remoteLoadedRef = useRef(false);
 
+  // Al iniciar sesión: trae lo que haya guardado en la nube (o sube lo local si es la primera vez)
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    remoteLoadedRef.current = false;
+    setSyncStatus("syncing");
+    (async () => {
+      try {
+        const { data: row, error } = await supabase.from("agenda_data").select("data").eq("user_id", userId).maybeSingle();
+        if (cancelled) return;
+        if (error) throw error;
+        if (row && row.data) {
+          setData({ ...defaultData(), ...row.data });
+        } else {
+          await supabase.from("agenda_data").upsert({ user_id: userId, data });
+        }
+        remoteLoadedRef.current = true;
+        setSyncStatus("synced");
+      } catch {
+        if (!cancelled) setSyncStatus("error");
+        remoteLoadedRef.current = true; // igual dejamos trabajar en local
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  // Siempre guarda una copia local instantánea (funciona offline)
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch { /* memoria */ }
   }, [data]);
 
-  return [data, setData];
+  // Sube los cambios a Supabase (con una pequeña espera para no saturar la red mientras escribes)
+  useEffect(() => {
+    if (!userId || !remoteLoadedRef.current) return;
+    setSyncStatus("syncing");
+    const t = setTimeout(async () => {
+      try {
+        const { error } = await supabase.from("agenda_data").upsert({ user_id: userId, data, updated_at: new Date().toISOString() });
+        setSyncStatus(error ? "error" : "synced");
+      } catch {
+        setSyncStatus("offline");
+      }
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [data, userId]);
+
+  return [data, setData, syncStatus];
 }
 
 const GlobalStyle = () => (
@@ -289,6 +335,8 @@ const GlobalStyle = () => (
     .a-monthcell.selected.today { color:#fff; }
     .a-monthdot { width:5px; height:5px; border-radius:50%; background:var(--butter); }
     .a-monthcell.selected .a-monthdot { background:#fff; }
+    .a-spin { animation: a-spin-anim 1s linear infinite; }
+    @keyframes a-spin-anim { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
 
     .a-stat-label { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-soft); margin-bottom:6px;}
 
@@ -459,8 +507,8 @@ function usePomodoro() {
   return { secondsLeft, running, mode, cycles, total, toggle, reset };
 }
 
-export default function AgendaApp() {
-  const [data, setData] = useLocalState();
+function AgendaApp({ session }) {
+  const [data, setData, syncStatus] = useSyncedState(session?.user?.id);
   const [tab, setTab] = useState("inicio");
   const [month, setMonth] = useState(currentMonthKey());
   const [financeTab, setFinanceTab] = useState("resumen");
@@ -585,32 +633,37 @@ export default function AgendaApp() {
       </nav>
 
       <main className="a-main">
-        <div style={{ position: "relative", marginBottom: 18 }}>
-          <div style={{ position: "relative" }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 18, alignItems: "center" }}>
+          <div style={{ position: "relative", flex: 1 }}>
             <Search size={15} color="var(--text-faint)" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
             <input
               className="a-input" placeholder="Buscar notas, recetas, movimientos, eventos..."
               value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
               style={{ paddingLeft: 34 }}
             />
-          </div>
-          {searchQuery.trim() && (
-            <div className="a-card" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 50, padding: 8, maxHeight: 320, overflowY: "auto" }}>
-              {searchResults.length === 0 && <p className="a-sub" style={{ margin: "6px 10px" }}>Sin resultados para "{searchQuery}".</p>}
-              {searchResults.map((r, i) => {
-                const Icon = r.icon;
-                return (
-                  <div key={i} className="a-list-item" style={{ cursor: "pointer", padding: "8px 10px" }} onClick={() => { setTab(r.tab); setSearchQuery(""); }}>
-                    <Icon size={14} color="var(--text-soft)" />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13 }}>{r.label}</div>
-                      <div className="a-sub" style={{ margin: 0, fontSize: 11 }}>{r.sub}</div>
+            {searchQuery.trim() && (
+              <div className="a-card" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 50, padding: 8, maxHeight: 320, overflowY: "auto" }}>
+                {searchResults.length === 0 && <p className="a-sub" style={{ margin: "6px 10px" }}>Sin resultados para "{searchQuery}".</p>}
+                {searchResults.map((r, i) => {
+                  const Icon = r.icon;
+                  return (
+                    <div key={i} className="a-list-item" style={{ cursor: "pointer", padding: "8px 10px" }} onClick={() => { setTab(r.tab); setSearchQuery(""); }}>
+                      <Icon size={14} color="var(--text-soft)" />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13 }}>{r.label}</div>
+                        <div className="a-sub" style={{ margin: 0, fontSize: 11 }}>{r.sub}</div>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div title={syncStatus === "synced" ? "Sincronizado con la nube" : syncStatus === "syncing" ? "Sincronizando..." : syncStatus === "error" || syncStatus === "offline" ? "Sin conexión — guardado solo en este dispositivo por ahora" : ""} style={{ flexShrink: 0 }}>
+            {syncStatus === "syncing" && <Loader2 size={17} color="var(--text-soft)" className="a-spin" />}
+            {syncStatus === "synced" && <Cloud size={17} color="var(--sage)" />}
+            {(syncStatus === "error" || syncStatus === "offline") && <CloudOff size={17} color="var(--clay)" />}
+          </div>
         </div>
         {tab === "inicio" && (
           <InicioTab data={data} patch={patch} todayList={todayList} progressPct={progressPct} ingresosMes={ingresosMes} egresosMes={egresosMes}
@@ -633,10 +686,85 @@ export default function AgendaApp() {
         {tab === "pomodoro" && <PomodoroTab {...pomodoro} />}
         {tab === "recordatorios" && <RecordatoriosTab data={data} patch={patch} />}
         {tab === "stats" && <StatsTab data={data} month={month} monthTx={monthTx} />}
-        {tab === "ajustes" && <AjustesTab data={data} patch={patch} setData={setData} />}
+        {tab === "ajustes" && <AjustesTab data={data} patch={patch} setData={setData} session={session} />}
       </main>
     </div>
   );
+}
+
+/* ================= AUTENTICACIÓN (para sincronizar entre dispositivos) ================= */
+function AuthScreen() {
+  const [mode, setMode] = useState("login"); // login | signup
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError(""); setNotice(""); setLoading(true);
+    try {
+      if (mode === "login") {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        setNotice("Cuenta creada. Si tu proyecto de Supabase pide confirmar el correo, revisa tu bandeja de entrada; si no, ya puedes iniciar sesión.");
+      }
+    } catch (err) {
+      setError(err.message || "Algo salió mal. Intenta de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="agenda-root" style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
+      <GlobalStyle />
+      <div className="a-card" style={{ maxWidth: 360, width: "100%" }}>
+        <h1 className="a-h1 agenda-serif" style={{ textAlign: "center" }}>Mi Agenda 🌿</h1>
+        <p className="a-sub" style={{ textAlign: "center" }}>SAN-ORGANIC — sincronizada entre tus dispositivos.</p>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <button className={`a-btn ${mode === "login" ? "" : "secondary"}`} style={{ flex: 1, justifyContent: "center" }} onClick={() => setMode("login")}>Iniciar sesión</button>
+          <button className={`a-btn ${mode === "signup" ? "" : "secondary"}`} style={{ flex: 1, justifyContent: "center" }} onClick={() => setMode("signup")}>Crear cuenta</button>
+        </div>
+        <form onSubmit={submit}>
+          <input className="a-input" type="email" required placeholder="Correo" value={email} onChange={(e) => setEmail(e.target.value)} style={{ marginBottom: 10 }} />
+          <input className="a-input" type="password" required minLength={6} placeholder="Contraseña (mínimo 6 caracteres)" value={password} onChange={(e) => setPassword(e.target.value)} style={{ marginBottom: 14 }} />
+          {error && <p style={{ color: "var(--clay)", fontSize: 12.5, marginBottom: 10 }}>{error}</p>}
+          {notice && <p style={{ color: "var(--sage)", fontSize: 12.5, marginBottom: 10 }}>{notice}</p>}
+          <button className="a-btn" type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center" }}>
+            {loading ? "Un momento..." : mode === "login" ? "Iniciar sesión" : "Crear cuenta"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ================= RAÍZ: controla sesión y decide qué mostrar ================= */
+export default function Root() {
+  const [session, setSession] = useState(null);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setChecking(false); });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  if (checking) {
+    return (
+      <div className="agenda-root" style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
+        <GlobalStyle />
+        <Loader2 size={22} className="a-spin" />
+      </div>
+    );
+  }
+
+  return session ? <AgendaApp session={session} /> : <AuthScreen />;
 }
 
 /* ================= INICIO ================= */
@@ -2290,7 +2418,7 @@ function ExportPanel({ data }) {
 }
 
 /* ================= AJUSTES (personalización y datos) ================= */
-function AjustesTab({ data, patch, setData }) {
+function AjustesTab({ data, patch, setData, session }) {
   const [wallpaperInput, setWallpaperInput] = useState(data.wallpaper || "");
   const fileInputRef = useRef(null);
 
@@ -2325,6 +2453,12 @@ function AjustesTab({ data, patch, setData }) {
     <div>
       <h1 className="a-h1 agenda-serif">Ajustes</h1>
       <p className="a-sub">Personalización y gestión de tus datos.</p>
+
+      <div className="a-card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0, fontSize: 14.5 }}><Cloud size={15} style={{ verticalAlign: -2 }} /> Cuenta y sincronización</h3>
+        <p className="a-sub">Conectado como <b>{session?.user?.email}</b>. Tus datos se sincronizan automáticamente entre todos los dispositivos donde inicies sesión con esta cuenta.</p>
+        <button className="a-btn danger xs" onClick={() => supabase.auth.signOut()}><LogOut size={13} /> Cerrar sesión</button>
+      </div>
 
       <div className="a-card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Tu nombre</h3>
