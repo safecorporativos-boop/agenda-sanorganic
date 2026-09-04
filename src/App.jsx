@@ -179,7 +179,8 @@ const defaultData = () => ({
   notes: [], // {id,title,content,date,color,done,tags:[]}
   journal: {}, // { 'YYYY-MM-DD': {mood, reflection, text} }
   calendarEvents: {}, // { 'YYYY-MM-DD': [{id,title,time}] }
-  recipes: [], // {id,name,ingredients,steps}
+  recipes: [], // {id,name,ingredients,steps,link,items:[{ingredientId,qty}],servings,sellPrice,wastePercent}
+  ingredientsDb: [], // {id,name,unit,costPerUnit} — insumos para el costeo de recetas
   meals: {}, // { 'YYYY-MM-DD': { desayuno:{text,recipeId}, almuerzo:{...}, cena:{...}, snack:{...} } }
   workouts: [], // {id,date,type,duration,notes}
   reminders: [], // {id,text,datetime,done}
@@ -250,31 +251,31 @@ function useSyncedState(userId) {
 
 const GlobalStyle = () => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
     .agenda-root {
-      --bg:#fdf6f7; --bg-card:#ffffff; --bg-card-2:#f8e9ed;
-      --line: rgba(150,41,76,0.13);
-      --sage:#a23a5c; --sage-dim: rgba(162,58,92,0.11);
-      --butter:#c96e8a; --butter-dim: rgba(201,110,138,0.14);
-      --clay:#8a5762; --clay-dim: rgba(138,87,98,0.13);
-      --text:#3c2530; --text-soft:#6e4a54; --text-faint:#a97f8a;
+      --bg:#f6efe2; --bg-card:#fdfaf3; --bg-card-2:#f0e2cd;
+      --line: rgba(43,32,24,0.12);
+      --sage:#c1663f; --sage-dim: rgba(193,102,63,0.13);
+      --butter:#7c8a5a; --butter-dim: rgba(124,138,90,0.15);
+      --clay:#a24a3f; --clay-dim: rgba(162,74,63,0.13);
+      --text:#2b2018; --text-soft:#6b5d4a; --text-faint:#a89578;
       font-family:'Manrope',sans-serif;
       background:var(--bg); color:var(--text);
-      min-height:100vh; display:flex; border-radius:18px; overflow:hidden;
-      box-shadow: 0 20px 60px rgba(150,41,76,0.14);
+      min-height:100vh; display:flex; border-radius:12px; overflow:hidden;
+      box-shadow: 0 20px 60px rgba(43,32,24,0.16);
     }
     .agenda-root.dark {
-      --bg:#1c1418; --bg-card:#241a1f; --bg-card-2:#2e2126;
-      --line: rgba(242,220,228,0.10);
-      --sage:#e0a0b8; --sage-dim: rgba(224,160,184,0.15);
-      --butter:#d98aa3; --butter-dim: rgba(217,138,163,0.16);
-      --clay:#c98a94; --clay-dim: rgba(201,138,148,0.15);
-      --text:#f3e8ea; --text-soft:#b599a1; --text-faint:#7d6169;
+      --bg:#221a14; --bg-card:#2b2119; --bg-card-2:#35291f;
+      --line: rgba(245,230,210,0.10);
+      --sage:#e08a5c; --sage-dim: rgba(224,138,92,0.16);
+      --butter:#a8b87e; --butter-dim: rgba(168,184,126,0.16);
+      --clay:#d98a7a; --clay-dim: rgba(217,138,122,0.15);
+      --text:#f3ead9; --text-soft:#c2ad91; --text-faint:#8a7660;
       box-shadow: 0 20px 60px rgba(0,0,0,0.45);
     }
     .agenda-root * { box-sizing:border-box; }
-    .agenda-serif { font-family:'Fraunces', serif; }
+    .agenda-serif { font-family:'Playfair Display', 'Fraunces', serif; }
     .agenda-mono { font-family:'IBM Plex Mono', monospace; }
 
     .a-nav {
@@ -282,8 +283,9 @@ const GlobalStyle = () => (
       border-right:1px solid var(--line); display:flex; flex-direction:column;
       align-items:center; padding:16px 0; gap:4px; overflow-y:auto; max-height:92vh;
     }
+    .a-nav-mobile { display:none; }
     .a-navbtn {
-      width:46px; height:46px; border-radius:14px; display:flex;
+      width:46px; height:46px; border-radius:10px; display:flex;
       align-items:center; justify-content:center; color:var(--text-soft);
       background:transparent; border:none; cursor:pointer; transition:all .15s; flex-shrink:0;
     }
@@ -291,11 +293,28 @@ const GlobalStyle = () => (
     .a-navbtn.active { background:var(--sage-dim); color:var(--sage); }
     .a-navlabel-mobile { display:none; }
 
+    /* Sidebar ancho agrupado — escritorio */
+    .a-sidebar-desktop {
+      width:220px; flex-shrink:0; background:var(--bg-card); border-right:1px solid var(--line);
+      padding:20px 14px; overflow-y:auto; max-height:92vh; display:flex; flex-direction:column; gap:20px;
+    }
+    .a-sidebar-logo { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:600; padding:0 8px; margin-bottom:4px; letter-spacing:.02em; }
+    .a-sidebar-dot { width:9px; height:9px; border-radius:50%; background:var(--sage); flex-shrink:0; }
+    .a-sidebar-group { display:flex; flex-direction:column; gap:2px; }
+    .a-sidebar-grouplabel { font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-faint); font-weight:700; padding:0 8px; margin-bottom:6px; }
+    .a-sidebar-item {
+      display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:8px; border:none;
+      background:transparent; color:var(--text-soft); font-size:13px; font-family:inherit; cursor:pointer;
+      text-align:left; transition:all .12s; width:100%;
+    }
+    .a-sidebar-item:hover { background:var(--bg-card-2); color:var(--text); }
+    .a-sidebar-item.active { background:var(--sage-dim); color:var(--sage); font-weight:700; }
+
     .a-main { flex:1; min-width:0; padding:28px 34px; overflow-y:auto; max-height:92vh; }
     .a-h1 { font-size:26px; font-weight:600; margin:0 0 4px; }
     .a-sub { color:var(--text-soft); font-size:13.5px; margin:0 0 24px; }
 
-    .a-card { background:var(--bg-card); border:1px solid var(--line); border-radius:16px; padding:18px 20px; }
+    .a-card { background:var(--bg-card); border:1px solid var(--line); border-radius:10px; padding:18px 20px; }
     .a-grid { display:grid; gap:14px; }
     .a-grid-3 { grid-template-columns:repeat(3,1fr); }
     .a-grid-2 { grid-template-columns:repeat(2,1fr); }
@@ -306,7 +325,7 @@ const GlobalStyle = () => (
     /* Grilla horaria semanal (escritorio) */
     .a-hourgrid-desktop { display:block; margin-bottom:16px; }
     .a-daygrid-mobile { display:none; }
-    .a-hourgrid { display:grid; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--bg-card); }
+    .a-hourgrid { display:grid; border:1px solid var(--line); border-radius:9px; overflow:hidden; background:var(--bg-card); }
     .a-hourgrid-corner { background:var(--bg-card-2); border-bottom:1px solid var(--line); border-right:1px solid var(--line); }
     .a-hourgrid-daylabel { background:var(--bg-card-2); border-bottom:1px solid var(--line); border-right:1px solid var(--line);
       font-size:11.5px; font-weight:700; text-transform:capitalize; text-align:center; padding:8px 4px; }
@@ -326,7 +345,7 @@ const GlobalStyle = () => (
     .a-daygrid-placeholder { color:var(--text-faint); font-size:13px; }
 
     .a-monthgrid { gap:6px; }
-    .a-monthcell { aspect-ratio:1; border-radius:12px; background:var(--bg-card); border:1px solid var(--line);
+    .a-monthcell { aspect-ratio:1; border-radius:9px; background:var(--bg-card); border:1px solid var(--line);
       display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; cursor:pointer; transition:all .12s; font-size:13px; }
     .a-monthcell:hover { background:var(--bg-card-2); }
     .a-monthcell.today { border:2px solid var(--sage); font-weight:700; color:var(--sage); }
@@ -350,13 +369,13 @@ const GlobalStyle = () => (
 
     .a-input, .a-select, textarea.a-input {
       background:var(--bg); border:1px solid var(--line); color:var(--text);
-      border-radius:10px; padding:9px 11px; font-size:13.5px; font-family:inherit;
+      border-radius:8px; padding:9px 11px; font-size:13.5px; font-family:inherit;
       width:100%; outline:none;
     }
     .a-input:focus, .a-select:focus { border-color:var(--sage); }
 
     .a-btn {
-      background:var(--sage); color:#fff; border:none; border-radius:10px;
+      background:var(--sage); color:#fff; border:none; border-radius:8px;
       padding:9px 16px; font-weight:700; font-size:13px; cursor:pointer;
       display:inline-flex; align-items:center; gap:6px; transition:opacity .15s;
     }
@@ -396,15 +415,16 @@ const GlobalStyle = () => (
       display:flex; align-items:center; justify-content:center; font-size:10.5px; cursor:pointer; color:var(--text-soft); }
     .a-daychip.on { background:var(--sage); color:#fff; border-color:var(--sage); }
 
-    .a-note { border-radius:14px; padding:14px; position:relative; min-height:120px; display:flex; flex-direction:column; }
+    .a-note { border-radius:10px; padding:14px; position:relative; min-height:120px; display:flex; flex-direction:column; }
     .a-tag { font-size:10px; padding:2px 8px; border-radius:999px; background:rgba(0,0,0,0.08); }
 
     @media (max-width: 760px) {
-      .agenda-root { flex-direction:column; border-radius:0; }
-      .a-nav { width:100%; flex-direction:row; justify-content:flex-start; padding:8px 4px; order:2; max-height:none; overflow-x:auto; overflow-y:visible; }
-      .a-navbtn { flex-direction:column; width:auto; height:auto; padding:6px 9px; border-radius:10px; gap:2px; }
-      .a-navlabel-mobile { display:block; font-size:8.5px; font-weight:600; white-space:nowrap; }
-      .a-main { max-height:none; padding:18px 16px 90px; }
+      .agenda-root { border-radius:0; }
+      .a-sidebar-desktop { display:none; }
+      .a-nav-mobile { display:flex; flex-direction:column; width:66px; flex-shrink:0; padding:10px 4px; gap:3px; max-height:100vh; overflow-y:auto; overflow-x:visible; }
+      .a-navbtn { flex-direction:column; width:100%; height:auto; padding:7px 2px; border-radius:9px; gap:2px; }
+      .a-navlabel-mobile { display:block; font-size:7.8px; font-weight:600; white-space:normal; text-align:center; line-height:1.15; }
+      .a-main { max-height:100vh; padding:18px 14px 30px; }
       .a-grid-3, .a-grid-4, .a-grid-2 { grid-template-columns:1fr; }
       .a-grid-7 { grid-template-columns:repeat(7,minmax(34px,1fr)); }
       .a-week-event { font-size:14.5px; }
@@ -455,22 +475,24 @@ function Ring({ pct, color = "var(--sage)", size = 78, showLabel = true }) {
 }
 
 const NAV = [
-  { id: "inicio", label: "Inicio", icon: Home },
-  { id: "prioridades", label: "Día", icon: ListChecks },
-  { id: "habitos", label: "Hábitos", icon: Repeat },
-  { id: "finanzas", label: "Finanzas", icon: Wallet },
-  { id: "objetivos", label: "Metas", icon: Flag },
-  { id: "proyectos", label: "Proyectos", icon: FolderKanban },
-  { id: "comidas", label: "Comidas", icon: UtensilsCrossed },
-  { id: "entrenamiento", label: "Entreno", icon: Dumbbell },
-  { id: "diario", label: "Diario", icon: BookOpen },
-  { id: "notas", label: "Notas", icon: StickyNote },
-  { id: "calendario", label: "Agenda", icon: Calendar },
-  { id: "pomodoro", label: "Pomodoro", icon: Timer },
-  { id: "recordatorios", label: "Recordatorios", icon: Bell },
-  { id: "stats", label: "Stats", icon: BarChart3 },
-  { id: "ajustes", label: "Ajustes", icon: Settings },
+  { id: "inicio", label: "Inicio", icon: Home, group: "General" },
+  { id: "prioridades", label: "Día", icon: ListChecks, group: "General" },
+  { id: "habitos", label: "Hábitos", icon: Repeat, group: "General" },
+  { id: "calendario", label: "Agenda", icon: Calendar, group: "General" },
+  { id: "notas", label: "Notas", icon: StickyNote, group: "General" },
+  { id: "stats", label: "Stats", icon: BarChart3, group: "General" },
+  { id: "finanzas", label: "Finanzas", icon: Wallet, group: "Negocio" },
+  { id: "comidas", label: "Comidas", icon: UtensilsCrossed, group: "Negocio" },
+  { id: "proyectos", label: "Proyectos", icon: FolderKanban, group: "Negocio" },
+  { id: "objetivos", label: "Metas", icon: Flag, group: "Personal" },
+  { id: "diario", label: "Diario", icon: BookOpen, group: "Personal" },
+  { id: "entrenamiento", label: "Entreno", icon: Dumbbell, group: "Personal" },
+  { id: "pomodoro", label: "Pomodoro", icon: Timer, group: "Personal" },
+  { id: "recordatorios", label: "Recordatorios", icon: Bell, group: "Personal" },
+  { id: "ajustes", label: "Ajustes", icon: Settings, group: "Personal" },
 ];
+
+const NAV_GROUP_ORDER = ["General", "Negocio", "Personal"];
 
 /* ============================================================ */
 
@@ -617,7 +639,7 @@ function AgendaApp({ session }) {
   return (
     <div className={`agenda-root ${data.darkMode ? "dark" : ""}`}>
       <GlobalStyle />
-      <nav className="a-nav">
+      <nav className="a-nav a-nav-mobile">
         {NAV.map((n) => {
           const Icon = n.icon;
           return (
@@ -630,6 +652,30 @@ function AgendaApp({ session }) {
             </button>
           );
         })}
+      </nav>
+
+      <nav className="a-sidebar-desktop">
+        <div className="a-sidebar-logo">
+          <span className="a-sidebar-dot" />
+          <span className="agenda-serif">SAN-ORGANIC</span>
+        </div>
+        {NAV_GROUP_ORDER.map((group) => (
+          <div key={group} className="a-sidebar-group">
+            <div className="a-sidebar-grouplabel">{group}</div>
+            {NAV.filter((n) => n.group === group).map((n) => {
+              const Icon = n.icon;
+              return (
+                <button key={n.id} className={`a-sidebar-item ${tab === n.id ? "active" : ""}`} onClick={() => setTab(n.id)} style={{ position: "relative" }}>
+                  <Icon size={16} />
+                  <span>{n.label}</span>
+                  {n.id === "pomodoro" && pomodoro.running && (
+                    <span style={{ position: "absolute", top: 10, right: 10, width: 6, height: 6, borderRadius: "50%", background: "var(--sage)" }} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       <main className="a-main">
@@ -1689,6 +1735,23 @@ const MEAL_SLOTS = [
   { id: "snack", label: "Snack" },
 ];
 
+/* Calcula el costo de una receta a partir de sus insumos (food cost) */
+const recipeCost = (recipe, ingredientsDb) => {
+  const items = recipe.items || [];
+  const rawCost = items.reduce((sum, it) => {
+    const ing = ingredientsDb.find((i) => i.id === it.ingredientId);
+    return sum + (ing ? ing.costPerUnit * (it.qty || 0) : 0);
+  }, 0);
+  const waste = recipe.wastePercent || 0;
+  const totalCost = rawCost * (1 + waste / 100);
+  const servings = recipe.servings || 1;
+  const costPerServing = totalCost / servings;
+  const sellPrice = recipe.sellPrice || 0;
+  const foodCostPct = sellPrice ? (costPerServing / sellPrice) * 100 : null;
+  const marginPerServing = sellPrice ? sellPrice - costPerServing : null;
+  return { rawCost, totalCost, costPerServing, foodCostPct, marginPerServing, hasItems: items.length > 0 };
+};
+
 function ComidasTab({ data, patch }) {
   const [date, setDate] = useState(todayISO());
   const [sub, setSub] = useState("comidas");
@@ -1711,12 +1774,13 @@ function ComidasTab({ data, patch }) {
       <div className="a-row" style={{ marginBottom: 4 }}>
         <div>
           <h1 className="a-h1 agenda-serif">Comidas</h1>
-          <p className="a-sub">Registra lo que comes y enlázalo con tus recetas.</p>
+          <p className="a-sub">Registra lo que comes, tus recetas y su costeo (food cost).</p>
         </div>
       </div>
-      <div style={{ display: "flex", gap: 8, margin: "0 0 16px" }}>
+      <div style={{ display: "flex", gap: 8, margin: "0 0 16px", flexWrap: "wrap" }}>
         <button className={`a-btn ${sub === "comidas" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setSub("comidas")}>Registro diario</button>
         <button className={`a-btn ${sub === "recetas" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => { setHighlightRecipe(null); setSub("recetas"); }}>Recetas</button>
+        <button className={`a-btn ${sub === "insumos" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setSub("insumos")}>Insumos</button>
       </div>
 
       {sub === "comidas" && (
@@ -1752,6 +1816,79 @@ function ComidasTab({ data, patch }) {
         <RecetasPanel data={data} patch={patch} highlightId={highlightRecipe}
           onGoToMeal={(mealDate) => { setDate(mealDate); setSub("comidas"); }} />
       )}
+
+      {sub === "insumos" && <InsumosPanel data={data} patch={patch} />}
+    </div>
+  );
+}
+
+function InsumosPanel({ data, patch }) {
+  const [name, setName] = useState("");
+  const [unit, setUnit] = useState("kg");
+  const [cost, setCost] = useState("");
+  const [editingId, setEditingId] = useState(null);
+
+  const addIngredient = () => {
+    const c = parseFloat(cost);
+    if (!name.trim() || !c) return;
+    patch((d) => ({ ingredientsDb: [...d.ingredientsDb, { id: uid(), name, unit, costPerUnit: c }] }));
+    setName(""); setCost("");
+  };
+  const delIngredient = (id) => {
+    if (!confirm("¿Eliminar este insumo? Las recetas que lo usan quedarán sin ese costo.")) return;
+    patch((d) => ({ ingredientsDb: d.ingredientsDb.filter((i) => i.id !== id) }));
+  };
+  const updateIngredient = (id, fields) => patch((d) => ({ ingredientsDb: d.ingredientsDb.map((i) => i.id === id ? { ...i, ...fields } : i) }));
+
+  return (
+    <div>
+      <div className="a-card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Nuevo insumo</h3>
+        <p className="a-sub">La unidad es la que uses para comprarlo (ej: kg de carne, litro de aceite, unidad de pan). El costo es por esa unidad.</p>
+        <div className="a-grid a-grid-3" style={{ marginBottom: 10 }}>
+          <input className="a-input" placeholder="Nombre (ej: Carne molida)" value={name} onChange={(e) => setName(e.target.value)} />
+          <select className="a-select" value={unit} onChange={(e) => setUnit(e.target.value)}>
+            <option value="kg">kg</option>
+            <option value="g">g</option>
+            <option value="l">l</option>
+            <option value="ml">ml</option>
+            <option value="unidad">unidad</option>
+          </select>
+          <input className="a-input" type="number" placeholder="Costo por unidad ($)" value={cost} onChange={(e) => setCost(e.target.value)} />
+        </div>
+        <button className="a-btn" onClick={addIngredient}><Plus size={14} /> Agregar insumo</button>
+      </div>
+
+      <div className="a-grid a-grid-2">
+        {data.ingredientsDb.map((ing) => (
+          <div className="a-card" key={ing.id}>
+            {editingId === ing.id ? (
+              <>
+                <input className="a-input" value={ing.name} onChange={(e) => updateIngredient(ing.id, { name: e.target.value })} style={{ marginBottom: 8 }} />
+                <div className="a-grid a-grid-2" style={{ marginBottom: 8 }}>
+                  <select className="a-select" value={ing.unit} onChange={(e) => updateIngredient(ing.id, { unit: e.target.value })}>
+                    <option value="kg">kg</option><option value="g">g</option><option value="l">l</option><option value="ml">ml</option><option value="unidad">unidad</option>
+                  </select>
+                  <input className="a-input" type="number" value={ing.costPerUnit} onChange={(e) => updateIngredient(ing.id, { costPerUnit: parseFloat(e.target.value) || 0 })} />
+                </div>
+                <button className="a-btn xs" onClick={() => setEditingId(null)}><Check size={12} /> Listo</button>
+              </>
+            ) : (
+              <div className="a-row">
+                <div>
+                  <div style={{ fontWeight: 600 }}>{ing.name}</div>
+                  <div className="a-sub agenda-mono" style={{ margin: 0 }}>{formatCLP(ing.costPerUnit)} / {ing.unit}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Pencil size={14} color="var(--text-soft)" style={{ cursor: "pointer" }} onClick={() => setEditingId(ing.id)} />
+                  <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delIngredient(ing.id)} />
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        {data.ingredientsDb.length === 0 && <p className="a-sub">Sin insumos todavía. Agrega el primero arriba — luego podrás usarlo en el costeo de tus recetas.</p>}
+      </div>
     </div>
   );
 }
@@ -1761,13 +1898,37 @@ function RecetasPanel({ data, patch, highlightId, onGoToMeal }) {
   const [ingredients, setIngredients] = useState("");
   const [steps, setSteps] = useState("");
   const [link, setLink] = useState("");
+  const [showCosteo, setShowCosteo] = useState(false);
+  const [items, setItems] = useState([]); // {ingredientId, qty}
+  const [servings, setServings] = useState(1);
+  const [sellPrice, setSellPrice] = useState("");
+  const [wastePercent, setWastePercent] = useState(0);
+  const [editingId, setEditingId] = useState(null);
+
+  const resetForm = () => {
+    setName(""); setIngredients(""); setSteps(""); setLink("");
+    setItems([]); setServings(1); setSellPrice(""); setWastePercent(0); setShowCosteo(false);
+  };
 
   const addRecipe = () => {
     if (!name.trim()) return;
-    patch((d) => ({ recipes: [...d.recipes, { id: uid(), name, ingredients, steps, link }] }));
-    setName(""); setIngredients(""); setSteps(""); setLink("");
+    const recipe = {
+      id: uid(), name, ingredients, steps, link,
+      items: items.filter((it) => it.ingredientId && it.qty),
+      servings: parseInt(servings) || 1,
+      sellPrice: parseFloat(sellPrice) || 0,
+      wastePercent: parseFloat(wastePercent) || 0,
+    };
+    patch((d) => ({ recipes: [...d.recipes, recipe] }));
+    resetForm();
   };
   const delRecipe = (id) => patch((d) => ({ recipes: d.recipes.filter((r) => r.id !== id) }));
+
+  const addItemRow = () => setItems((it) => [...it, { ingredientId: data.ingredientsDb[0]?.id || "", qty: "" }]);
+  const updateItemRow = (idx, field, val) => setItems((it) => it.map((row, i) => i === idx ? { ...row, [field]: val } : row));
+  const delItemRow = (idx) => setItems((it) => it.filter((_, i) => i !== idx));
+
+  const liveCost = recipeCost({ items, servings, sellPrice: parseFloat(sellPrice) || 0, wastePercent: parseFloat(wastePercent) || 0 }, data.ingredientsDb);
 
   const mealsUsingRecipe = (recipeId) => {
     const usages = [];
@@ -1787,14 +1948,69 @@ function RecetasPanel({ data, patch, highlightId, onGoToMeal }) {
       <div className="a-card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Nueva receta</h3>
         <input className="a-input" placeholder="Nombre de la receta" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 8 }} />
-        <textarea className="a-input" rows={2} placeholder="Ingredientes..." value={ingredients} onChange={(e) => setIngredients(e.target.value)} style={{ marginBottom: 8, fontFamily: "inherit" }} />
+        <textarea className="a-input" rows={2} placeholder="Ingredientes (texto libre, para referencia)..." value={ingredients} onChange={(e) => setIngredients(e.target.value)} style={{ marginBottom: 8, fontFamily: "inherit" }} />
         <textarea className="a-input" rows={2} placeholder="Preparación..." value={steps} onChange={(e) => setSteps(e.target.value)} style={{ marginBottom: 8, fontFamily: "inherit" }} />
         <input className="a-input" placeholder="Link de la receta (opcional, ej: video o blog)" value={link} onChange={(e) => setLink(e.target.value)} style={{ marginBottom: 8 }} />
+
+        <button className="a-btn secondary xs" onClick={() => setShowCosteo((s) => !s)} style={{ marginBottom: showCosteo ? 12 : 0 }}>
+          {showCosteo ? "Ocultar costeo" : "+ Agregar costeo (food cost)"}
+        </button>
+
+        {showCosteo && (
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: 12, marginBottom: 8 }}>
+            {data.ingredientsDb.length === 0 && (
+              <p className="a-sub">Primero agrega insumos en la pestaña "Insumos" para poder costear esta receta.</p>
+            )}
+            {items.map((row, idx) => (
+              <div key={idx} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                <select className="a-select" value={row.ingredientId} onChange={(e) => updateItemRow(idx, "ingredientId", e.target.value)}>
+                  {data.ingredientsDb.map((ing) => <option key={ing.id} value={ing.id}>{ing.name} ({ing.unit})</option>)}
+                </select>
+                <input className="a-input" type="number" placeholder="Cantidad" style={{ maxWidth: 100 }} value={row.qty} onChange={(e) => updateItemRow(idx, "qty", parseFloat(e.target.value) || "")} />
+                <X size={16} color="var(--text-faint)" style={{ cursor: "pointer", flexShrink: 0 }} onClick={() => delItemRow(idx)} />
+              </div>
+            ))}
+            {data.ingredientsDb.length > 0 && (
+              <button className="a-btn secondary xs" onClick={addItemRow} style={{ marginBottom: 12 }}><Plus size={12} /> Agregar insumo a la receta</button>
+            )}
+
+            <div className="a-grid a-grid-3" style={{ marginBottom: 10 }}>
+              <div>
+                <div className="a-stat-label">Rinde (porciones)</div>
+                <input className="a-input" type="number" min={1} value={servings} onChange={(e) => setServings(e.target.value)} />
+              </div>
+              <div>
+                <div className="a-stat-label">Merma (%)</div>
+                <input className="a-input" type="number" min={0} value={wastePercent} onChange={(e) => setWastePercent(e.target.value)} />
+              </div>
+              <div>
+                <div className="a-stat-label">Precio de venta / porción</div>
+                <input className="a-input" type="number" placeholder="Opcional" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} />
+              </div>
+            </div>
+
+            {liveCost.hasItems && (
+              <div className="a-card" style={{ padding: 10, background: "#fff" }}>
+                <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Costo total (con merma)</span><span className="agenda-mono">{formatCLP(liveCost.totalCost)}</span></div>
+                <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Costo por porción</span><span className="agenda-mono">{formatCLP(liveCost.costPerServing)}</span></div>
+                {liveCost.foodCostPct !== null && (
+                  <>
+                    <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Food cost</span><span className="agenda-mono" style={{ color: liveCost.foodCostPct <= 33 ? "var(--sage)" : "var(--clay)" }}>{liveCost.foodCostPct.toFixed(1)}%</span></div>
+                    <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Margen por porción</span><span className="agenda-mono">{formatCLP(liveCost.marginPerServing)}</span></div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <button className="a-btn" onClick={addRecipe}><ChefHat size={14} /> Guardar receta</button>
       </div>
+
       <div className="a-grid a-grid-2">
         {data.recipes.map((r) => {
           const usages = mealsUsingRecipe(r.id);
+          const c = recipeCost(r, data.ingredientsDb);
           return (
             <div className="a-card" key={r.id} style={{ border: highlightId === r.id ? "2px solid var(--sage)" : "1px solid var(--line)" }}>
               <div className="a-row"><div style={{ fontWeight: 600 }}>{r.name}</div>
@@ -1803,6 +2019,16 @@ function RecetasPanel({ data, patch, highlightId, onGoToMeal }) {
               {r.ingredients && <div className="a-sub" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}><b>Ingredientes:</b> {r.ingredients}</div>}
               {r.steps && <div className="a-sub" style={{ marginTop: 4, whiteSpace: "pre-wrap" }}><b>Preparación:</b> {r.steps}</div>}
               {r.link && <div style={{ marginTop: 6 }}><a href={r.link} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, color: "var(--sage)" }}>Ver receta original ↗</a></div>}
+
+              {c.hasItems && (
+                <div style={{ marginTop: 10, background: "var(--bg-card-2)", borderRadius: 8, padding: 8 }}>
+                  <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Costo/porción ({r.servings || 1})</span><span className="agenda-mono" style={{ fontSize: 12.5 }}>{formatCLP(c.costPerServing)}</span></div>
+                  {c.foodCostPct !== null && (
+                    <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Food cost</span><span className="agenda-mono" style={{ fontSize: 12.5, color: c.foodCostPct <= 33 ? "var(--sage)" : "var(--clay)" }}>{c.foodCostPct.toFixed(1)}%</span></div>
+                  )}
+                </div>
+              )}
+
               {usages.length > 0 && (
                 <div style={{ marginTop: 10 }}>
                   <div className="a-stat-label">Usada en Comidas</div>
