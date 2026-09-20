@@ -5,7 +5,7 @@ import {
   Plus, Trash2, ChevronLeft, ChevronRight, X, Check, Flag, FolderKanban,
   Timer, Bell, Pencil, Play, Pause, RotateCcw, Settings, Upload, Download,
   Image as ImageIcon, Search, Cloud, CloudOff, LogOut, Loader2,
-  Palette, Sun, Moon, Mail, Lock
+  Palette, Sun, Moon, Mail, Lock, MoreHorizontal
 } from "lucide-react";
 
 /* ---------------------------------------------------------
@@ -223,20 +223,40 @@ const GlobalStyle = () => (
     .agenda-serif { font-family:'Fraunces', serif; font-optical-sizing: auto; }
     .agenda-mono { font-family:'IBM Plex Mono', monospace; }
 
-    .a-nav {
-      width:76px; flex-shrink:0; background:var(--bg-card);
-      border-right:1px solid var(--line); display:flex; flex-direction:column;
-      align-items:center; padding:16px 0; gap:4px; overflow-y:auto; max-height:92vh;
+    /* ---------- Barra de navegación inferior (celular, estilo app nativa) ---------- */
+    .a-bottombar {
+      display:none; position:fixed; left:0; right:0; bottom:0; z-index:80;
+      background:var(--bg-card); border-top:1px solid var(--line);
+      padding:8px 4px calc(8px + env(safe-area-inset-bottom, 0px));
+      box-shadow: 0 -8px 24px -12px rgba(43,32,24,0.14);
     }
-    .a-nav-mobile { display:none; }
-    .a-navbtn {
-      width:46px; height:46px; border-radius:10px; display:flex;
-      align-items:center; justify-content:center; color:var(--text-soft);
-      background:transparent; border:none; cursor:pointer; transition:all .15s; flex-shrink:0;
+    .a-bottombar-row { display:flex; align-items:stretch; justify-content:space-around; }
+    .a-bottombar-btn {
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+      background:transparent; border:none; color:var(--text-faint); font-size:10.5px; font-weight:600;
+      padding:5px 6px; border-radius:12px; cursor:pointer; flex:1; min-width:0; transition:color .15s;
     }
-    .a-navbtn:hover { background:var(--bg-card-2); color:var(--text); }
-    .a-navbtn.active { background:var(--sage-dim); color:var(--sage); }
-    .a-navlabel-mobile { display:none; }
+    .a-bottombar-btn span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+    .a-bottombar-btn.active { color:var(--sage); }
+    .a-bottombar-btn .a-bottombar-icon-wrap {
+      width:34px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:10px; transition:background .15s;
+    }
+    .a-bottombar-btn.active .a-bottombar-icon-wrap { background:var(--sage-dim); }
+
+    .a-more-overlay { display:none; position:fixed; inset:0; background:rgba(20,10,14,0.4); z-index:90; }
+    .a-more-overlay.open { display:block; }
+    .a-more-sheet {
+      position:fixed; left:0; right:0; bottom:0; z-index:91; background:var(--bg-card);
+      border-radius:22px 22px 0 0; padding:10px 18px calc(22px + env(safe-area-inset-bottom, 0px));
+      box-shadow: 0 -20px 50px rgba(0,0,0,0.25); max-height:70vh; overflow-y:auto;
+    }
+    .a-more-handle { width:38px; height:4px; border-radius:99px; background:var(--line); margin:6px auto 16px; }
+    .a-more-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+    .a-more-item {
+      display:flex; flex-direction:column; align-items:center; gap:8px; padding:14px 6px; border-radius:16px;
+      background:var(--bg); border:1px solid var(--line); color:var(--text); font-size:12px; font-weight:600; cursor:pointer;
+    }
+    .a-more-item .a-more-icon { width:42px; height:42px; border-radius:13px; background:var(--sage-dim); color:var(--sage); display:flex; align-items:center; justify-content:center; }
 
     /* Sidebar ancho agrupado — escritorio */
     .a-sidebar-desktop {
@@ -415,10 +435,8 @@ const GlobalStyle = () => (
     @media (max-width: 760px) {
       .agenda-root { border-radius:0; }
       .a-sidebar-desktop { display:none; }
-      .a-nav-mobile { display:flex; flex-direction:column; width:66px; flex-shrink:0; padding:10px 4px; gap:3px; max-height:100vh; overflow-y:auto; overflow-x:visible; }
-      .a-navbtn { flex-direction:column; width:100%; height:auto; padding:7px 2px; border-radius:9px; gap:2px; }
-      .a-navlabel-mobile { display:block; font-size:7.8px; font-weight:600; white-space:normal; text-align:center; line-height:1.15; }
-      .a-main { max-height:100vh; padding:18px 14px 30px; }
+      .a-bottombar { display:block; }
+      .a-main { max-height:100vh; padding:18px 14px calc(88px + env(safe-area-inset-bottom, 0px)); }
       .a-grid-3, .a-grid-4, .a-grid-2 { grid-template-columns:1fr; }
       .a-grid-7 { grid-template-columns:repeat(7,minmax(34px,1fr)); }
       .a-week-event { font-size:14.5px; }
@@ -482,6 +500,7 @@ const NAV = [
 ];
 
 const NAV_GROUP_ORDER = ["Principal", "Trabajo", "Personal"];
+const BOTTOMBAR_IDS = ["inicio", "calendario", "prioridades", "notas"];
 
 /* ============================================================ */
 
@@ -522,6 +541,7 @@ function AgendaApp({ session }) {
   const [data, setData, syncStatus] = useSyncedState(session?.user?.id);
   const [tab, setTab] = useState("inicio");
   const [searchQuery, setSearchQuery] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
   const pomodoro = usePomodoro();
   const notifiedRef = useRef(new Set());
   const colorPalette = data.colorPalette || "earthy";
@@ -597,23 +617,54 @@ function AgendaApp({ session }) {
     return all.sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || ""))).slice(0, 5);
   }, [data.calendarEvents]);
 
+  const moreItems = NAV.filter((n) => !BOTTOMBAR_IDS.includes(n.id));
+  const moreActive = moreItems.some((n) => n.id === tab);
+
   return (
     <div className={`agenda-root palette-${colorPalette} ${data.darkMode ? "dark" : ""}`}>
       <GlobalStyle />
-      <nav className="a-nav a-nav-mobile">
-        {NAV.map((n) => {
-          const Icon = n.icon;
-          return (
-            <button key={n.id} className={`a-navbtn ${tab === n.id ? "active" : ""}`} onClick={() => setTab(n.id)} title={n.label} style={{ position: "relative" }}>
-              <Icon size={18} />
-              <span className="a-navlabel-mobile">{n.label}</span>
-              {n.id === "pomodoro" && pomodoro.running && (
-                <span style={{ position: "absolute", top: 6, right: 8, width: 7, height: 7, borderRadius: "50%", background: "var(--sage)" }} />
-              )}
-            </button>
-          );
-        })}
+      <nav className="a-bottombar">
+        <div className="a-bottombar-row">
+          {NAV.filter((n) => BOTTOMBAR_IDS.includes(n.id)).map((n) => {
+            const Icon = n.icon;
+            const active = tab === n.id;
+            return (
+              <button key={n.id} className={`a-bottombar-btn ${active ? "active" : ""}`} onClick={() => { setTab(n.id); setMoreOpen(false); }}>
+                <span className="a-bottombar-icon-wrap"><Icon size={19} /></span>
+                <span>{n.label}</span>
+              </button>
+            );
+          })}
+          <button className={`a-bottombar-btn ${moreActive ? "active" : ""}`} onClick={() => setMoreOpen(true)} style={{ position: "relative" }}>
+            <span className="a-bottombar-icon-wrap"><MoreHorizontal size={19} /></span>
+            <span>Más</span>
+            {pomodoro.running && (
+              <span style={{ position: "absolute", top: 2, right: "28%", width: 7, height: 7, borderRadius: "50%", background: "var(--sage)" }} />
+            )}
+          </button>
+        </div>
       </nav>
+
+      <div className={`a-more-overlay ${moreOpen ? "open" : ""}`} onClick={() => setMoreOpen(false)} />
+      {moreOpen && (
+        <div className="a-more-sheet">
+          <div className="a-more-handle" />
+          <div className="a-more-grid">
+            {moreItems.map((n) => {
+              const Icon = n.icon;
+              return (
+                <button key={n.id} className="a-more-item" onClick={() => { setTab(n.id); setMoreOpen(false); }} style={{ position: "relative" }}>
+                  <span className="a-more-icon"><Icon size={19} /></span>
+                  {n.label}
+                  {n.id === "pomodoro" && pomodoro.running && (
+                    <span style={{ position: "absolute", top: 10, right: 14, width: 8, height: 8, borderRadius: "50%", background: "var(--sage)" }} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <nav className="a-sidebar-desktop">
         <div className="a-sidebar-logo">
