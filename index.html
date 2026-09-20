@@ -14,8 +14,12 @@
     <link rel="manifest" href="/manifest.json" />
     <title>Mi Agenda — SAN-ORGANIC</title>
     <style>
-      body { margin:0; background:#F7E1D7; font-family:'Inter',sans-serif; }
-      #root { max-width:1180px; margin:0 auto; padding:20px; }
+      html, body { height:100%; }
+      body { margin:0; background:#F7E1D7; font-family:'Inter',sans-serif; overflow:hidden; }
+      #root { max-width:1180px; height:100%; margin:0 auto; padding:20px; }
+      @media (max-width: 760px) {
+        #root { max-width:100%; padding:0; }
+      }
     </style>
   </head>
   <body>
