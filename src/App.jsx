@@ -1,21 +1,18 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import {
-  Home, ListChecks, Repeat, Wallet, BookOpen, StickyNote, Calendar,
-  BarChart3, Plus, Trash2, ChevronLeft, ChevronRight, Target, PiggyBank,
-  TrendingUp, TrendingDown, X, Check, Sparkles, Flag, FolderKanban, Circle,
-  UtensilsCrossed, Dumbbell, Timer, Bell, Pencil, ArrowDownCircle, ArrowUpCircle,
-  Play, Pause, RotateCcw, ChefHat, Settings, Upload, Download, Image as ImageIcon, Search,
-  Cloud, CloudOff, LogOut, Loader2
+  Home, ListChecks, BookOpen, StickyNote, Calendar,
+  Plus, Trash2, ChevronLeft, ChevronRight, X, Check, Flag, FolderKanban,
+  Timer, Bell, Pencil, Play, Pause, RotateCcw, Settings, Upload, Download,
+  Image as ImageIcon, Search, Cloud, CloudOff, LogOut, Loader2,
+  Palette, Sun, Moon, Mail, Lock
 } from "lucide-react";
 
 /* ---------------------------------------------------------
    MI AGENDA — SAN-ORGANIC
-   Agenda personal completa: prioridades, hábitos, finanzas
-   (con metas, ahorros y categorías), metas no monetarias,
-   proyectos, comidas + recetas, entrenamiento, diario,
-   notas, calendario semanal/mensual, pomodoro y recordatorios.
-   Todo se guarda en localStorage.
+   Agenda personal enfocada: tareas del día, calendario,
+   notas, metas, proyectos, diario, pomodoro y recordatorios.
+   Se guarda en localStorage y se sincroniza en la nube con Supabase.
 --------------------------------------------------------- */
 
 const STORAGE_KEY = "mi-agenda-sanorganic-v2";
@@ -34,78 +31,12 @@ const monthLabel = (key) => {
   return d.toLocaleDateString("es-CL", { month: "long", year: "numeric" });
 };
 
-const formatCLP = (n) => "$" + Math.round(n || 0).toLocaleString("es-CL");
-
-const shiftMonth = (key, delta) => {
-  const [y, m] = key.split("-").map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-};
-
 const startOfWeek = (isoDate) => {
   const d = new Date(isoDate + "T00:00:00");
   const day = d.getDay(); // 0=Dom
   const diff = day === 0 ? -6 : 1 - day; // retroceder hasta el lunes
   d.setDate(d.getDate() + diff);
   return d;
-};
-
-const habitWeekProgress = (h, today, weekStart) => {
-  if (h.mode === "weekly") {
-    let total = 0;
-    for (let i = 0; i < 7; i++) {
-      const iso = toISO(addDays(weekStart, i));
-      if (iso > today) continue;
-      total += h.log[iso] || 0;
-    }
-    return { done: total, required: h.targetCount || 1, weekTotal: total, pct: (h.targetCount || 1) ? total / (h.targetCount || 1) : 0 };
-  }
-  let done = 0, elapsedRequired = 0, weekTotal = 0;
-  for (let i = 0; i < 7; i++) {
-    const d = addDays(weekStart, i);
-    const iso = toISO(d);
-    if (iso > today) continue;
-    if (h.targetDays.includes(d.getDay())) {
-      elapsedRequired++;
-      const qty = h.log[iso] || 0;
-      weekTotal += qty;
-      if (qty >= h.targetQty) done++;
-    }
-  }
-  return { done, required: elapsedRequired, weekTotal, pct: elapsedRequired ? done / elapsedRequired : 0 };
-};
-
-/* Racha: días (o semanas) consecutivos cumpliendo el hábito, contando hacia atrás desde hoy */
-const habitStreak = (h, today) => {
-  if (h.mode === "weekly") {
-    let streak = 0;
-    let cursor = startOfWeek(today);
-    // si la semana actual aún no cumple la meta, no rompe la racha (puede estar en curso) — se evalúa desde la semana anterior
-    let weekTotal = 0;
-    for (let i = 0; i < 7; i++) { const iso = toISO(addDays(cursor, i)); if (iso <= today) weekTotal += h.log[iso] || 0; }
-    if (weekTotal < h.targetCount) cursor = addDays(cursor, -7);
-    while (true) {
-      let total = 0;
-      for (let i = 0; i < 7; i++) total += h.log[toISO(addDays(cursor, i))] || 0;
-      if (total >= h.targetCount) { streak++; cursor = addDays(cursor, -7); } else break;
-      if (streak > 104) break;
-    }
-    return streak;
-  }
-  let streak = 0;
-  let cursor = new Date(today + "T00:00:00");
-  // si hoy es día objetivo y aún no se cumple, empezar a contar desde ayer (el día de hoy sigue en curso)
-  if (h.targetDays.includes(cursor.getDay()) && (h.log[today] || 0) < h.targetQty) cursor = addDays(cursor, -1);
-  while (true) {
-    const iso = toISO(cursor);
-    const isTarget = h.targetDays.includes(cursor.getDay());
-    if (isTarget) {
-      if ((h.log[iso] || 0) >= h.targetQty) { streak++; } else break;
-    }
-    cursor = addDays(cursor, -1);
-    if (streak > 730) break;
-  }
-  return streak;
 };
 
 const addDays = (date, n) => {
@@ -163,29 +94,15 @@ const dateTimeToICS = (isoDate, time) => {
 const defaultData = () => ({
   name: "",
   priorities: {}, // { 'YYYY-MM-DD': [{id,text,done}] }
-  habits: [
-    { id: uid(), name: "Tomar agua", emoji: "💧", mode: "daily", targetQty: 3, unit: "vasos", targetDays: [1,2,3,4,5], log: {} },
-    { id: uid(), name: "Hacer ejercicio", emoji: "🏋️", mode: "weekly", targetCount: 3, unit: "rutinas", log: {} },
-  ],
-  categories: {
-    ingreso: ["Ventas SAN-ORGANIC", "Sueldo", "Otros ingresos"],
-    egreso: ["Insumos", "Empaque", "Marketing", "Personal", "Otros"],
-  },
-  transactions: [], // {id,type:'ingreso'|'egreso'|'ahorro'|'retiro',concept,amount,category,date,pocketId?}
-  goals: [],
-  pockets: [], // {id,name,area,target}  (saldo se calcula desde transacciones)
   objectives: [],
   projects: [],
   notes: [], // {id,title,content,date,color,done,tags:[]}
   journal: {}, // { 'YYYY-MM-DD': {mood, reflection, text} }
   calendarEvents: {}, // { 'YYYY-MM-DD': [{id,title,time}] }
-  recipes: [], // {id,name,ingredients,steps,link,items:[{ingredientId,qty}],servings,sellPrice,wastePercent}
-  ingredientsDb: [], // {id,name,unit,costPerUnit} — insumos para el costeo de recetas
-  meals: {}, // { 'YYYY-MM-DD': { desayuno:{text,recipeId}, almuerzo:{...}, cena:{...}, snack:{...} } }
-  workouts: [], // {id,date,type,duration,notes}
   reminders: [], // {id,text,datetime,done}
   wallpaper: "", // URL de imagen de fondo (opcional)
   darkMode: false,
+  colorPalette: "earthy", // 'earthy' | 'golden' | 'retro'
 });
 
 function useSyncedState(userId) {
@@ -251,31 +168,59 @@ function useSyncedState(userId) {
 
 const GlobalStyle = () => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
+    /* ---------- Paletas de color (3 paletas fijas, elegidas en Ajustes) ----------
+       Cada paleta define 5 tonos base (--p-*) con los hex exactos de la paleta.
+       Todo lo demás (--bg, --sage, --clay, etc.) se deriva de esos 5 tonos, así que
+       el resto de la interfaz (ya escrita en var(--sage), var(--text), etc.) cambia
+       de color automáticamente sin tocar cada componente. */
+    .agenda-root.palette-earthy {
+      --p-bg:#F7E1D7; --p-surface:#DEDBD2; --p-accent:#B0C4B1; --p-accent2:#EDAFB8;
+      --p-accent3: color-mix(in srgb, #4A5759 35%, #EDAFB8 65%); --p-text:#4A5759;
+    }
+    .agenda-root.palette-golden {
+      --p-bg:#FFE1A8; --p-surface: color-mix(in srgb, #FFE1A8 60%, white 40%);
+      --p-accent:#E26D5C; --p-accent2:#C9CBA3; --p-accent3:#723D46; --p-text:#472D30;
+    }
+    .agenda-root.palette-retro {
+      --p-bg:#FFD9DA; --p-surface:#F3E1DD; --p-accent:#89023E; --p-accent2:#C7D9B7;
+      --p-accent3:#CC7178; --p-text:#89023E;
+    }
     .agenda-root {
-      --bg:#f6efe2; --bg-card:#fdfaf3; --bg-card-2:#f0e2cd;
-      --line: rgba(43,32,24,0.12);
-      --sage:#c1663f; --sage-dim: rgba(193,102,63,0.13);
-      --butter:#7c8a5a; --butter-dim: rgba(124,138,90,0.15);
-      --clay:#a24a3f; --clay-dim: rgba(162,74,63,0.13);
-      --text:#2b2018; --text-soft:#6b5d4a; --text-faint:#a89578;
-      font-family:'Manrope',sans-serif;
+      --bg: var(--p-bg); --bg-card: var(--p-surface);
+      --bg-card-2: color-mix(in srgb, var(--p-surface) 88%, var(--p-text) 12%);
+      --line: color-mix(in srgb, var(--p-text) 14%, transparent);
+      --sage: var(--p-accent); --sage-dim: color-mix(in srgb, var(--p-accent) 15%, transparent);
+      --butter: var(--p-accent2); --butter-dim: color-mix(in srgb, var(--p-accent2) 20%, transparent);
+      --clay: var(--p-accent3); --clay-dim: color-mix(in srgb, var(--p-accent3) 15%, transparent);
+      --text: var(--p-text);
+      --text-soft: color-mix(in srgb, var(--p-text) 62%, var(--p-bg) 38%);
+      --text-faint: color-mix(in srgb, var(--p-text) 38%, var(--p-bg) 62%);
+      font-family:'Inter',sans-serif;
       background:var(--bg); color:var(--text);
-      min-height:100vh; display:flex; border-radius:12px; overflow:hidden;
-      box-shadow: 0 20px 60px rgba(43,32,24,0.16);
+      min-height:100vh; display:flex; border-radius:16px; overflow:hidden;
+      box-shadow: 0 24px 70px rgba(43,32,24,0.16);
+      transition: background .25s ease, color .25s ease;
     }
     .agenda-root.dark {
-      --bg:#221a14; --bg-card:#2b2119; --bg-card-2:#35291f;
-      --line: rgba(245,230,210,0.10);
-      --sage:#e08a5c; --sage-dim: rgba(224,138,92,0.16);
-      --butter:#a8b87e; --butter-dim: rgba(168,184,126,0.16);
-      --clay:#d98a7a; --clay-dim: rgba(217,138,122,0.15);
-      --text:#f3ead9; --text-soft:#c2ad91; --text-faint:#8a7660;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      --bg: color-mix(in srgb, var(--p-text) 85%, black 15%);
+      --bg-card: color-mix(in srgb, var(--p-text) 70%, black 14%);
+      --bg-card-2: color-mix(in srgb, var(--p-text) 58%, black 12%);
+      --line: color-mix(in srgb, white 12%, transparent);
+      --sage: color-mix(in srgb, var(--p-accent) 80%, white 20%);
+      --sage-dim: color-mix(in srgb, var(--p-accent) 24%, transparent);
+      --butter: color-mix(in srgb, var(--p-accent2) 78%, white 22%);
+      --butter-dim: color-mix(in srgb, var(--p-accent2) 22%, transparent);
+      --clay: color-mix(in srgb, var(--p-accent3) 80%, white 20%);
+      --clay-dim: color-mix(in srgb, var(--p-accent3) 22%, transparent);
+      --text: color-mix(in srgb, var(--p-bg) 88%, white 12%);
+      --text-soft: color-mix(in srgb, var(--text) 70%, var(--bg) 30%);
+      --text-faint: color-mix(in srgb, var(--text) 45%, var(--bg) 55%);
+      box-shadow: 0 24px 70px rgba(0,0,0,0.5);
     }
     .agenda-root * { box-sizing:border-box; }
-    .agenda-serif { font-family:'Playfair Display', 'Fraunces', serif; }
+    .agenda-serif { font-family:'Fraunces', serif; font-optical-sizing: auto; }
     .agenda-mono { font-family:'IBM Plex Mono', monospace; }
 
     .a-nav {
@@ -310,12 +255,16 @@ const GlobalStyle = () => (
     .a-sidebar-item:hover { background:var(--bg-card-2); color:var(--text); }
     .a-sidebar-item.active { background:var(--sage-dim); color:var(--sage); font-weight:700; }
 
-    .a-main { flex:1; min-width:0; padding:28px 34px; overflow-y:auto; max-height:92vh; }
-    .a-h1 { font-size:26px; font-weight:600; margin:0 0 4px; }
-    .a-sub { color:var(--text-soft); font-size:13.5px; margin:0 0 24px; }
+    .a-main { flex:1; min-width:0; padding:36px 42px; overflow-y:auto; max-height:92vh; }
+    .a-h1 { font-size:28px; font-weight:600; margin:0 0 5px; letter-spacing:-.01em; }
+    .a-sub { color:var(--text-soft); font-size:13.5px; margin:0 0 28px; line-height:1.5; }
 
-    .a-card { background:var(--bg-card); border:1px solid var(--line); border-radius:10px; padding:18px 20px; }
-    .a-grid { display:grid; gap:14px; }
+    .a-card {
+      background:var(--bg-card); border:1px solid var(--line); border-radius:16px; padding:20px 22px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.02), 0 8px 24px -12px rgba(43,32,24,0.10);
+      transition: box-shadow .2s ease, transform .2s ease, background .25s ease, border-color .25s ease;
+    }
+    .a-grid { display:grid; gap:16px; }
     .a-grid-3 { grid-template-columns:repeat(3,1fr); }
     .a-grid-2 { grid-template-columns:repeat(2,1fr); }
     .a-grid-4 { grid-template-columns:repeat(4,1fr); }
@@ -369,23 +318,68 @@ const GlobalStyle = () => (
 
     .a-input, .a-select, textarea.a-input {
       background:var(--bg); border:1px solid var(--line); color:var(--text);
-      border-radius:8px; padding:9px 11px; font-size:13.5px; font-family:inherit;
-      width:100%; outline:none;
+      border-radius:10px; padding:10px 12px; font-size:13.5px; font-family:inherit;
+      width:100%; outline:none; transition:border-color .15s, box-shadow .15s;
     }
-    .a-input:focus, .a-select:focus { border-color:var(--sage); }
+    .a-input:focus, .a-select:focus { border-color:var(--sage); box-shadow:0 0 0 3px var(--sage-dim); }
 
     .a-btn {
-      background:var(--sage); color:#fff; border:none; border-radius:8px;
-      padding:9px 16px; font-weight:700; font-size:13px; cursor:pointer;
-      display:inline-flex; align-items:center; gap:6px; transition:opacity .15s;
+      background:var(--sage); color:#fff; border:none; border-radius:10px;
+      padding:10px 18px; font-weight:700; font-size:13px; cursor:pointer;
+      display:inline-flex; align-items:center; gap:6px;
+      transition:opacity .15s, transform .12s, box-shadow .15s;
     }
-    .a-btn:hover { opacity:.88; }
-    .a-btn.secondary { background:var(--bg-card-2); color:var(--text); border:1px solid var(--line); }
-    .a-btn.danger { background:var(--clay-dim); color:var(--clay); }
-    .a-btn.icon { padding:8px; }
-    .a-btn.xs { padding:5px 10px; font-size:11px; }
+    .a-btn:hover { opacity:.9; transform:translateY(-1px); box-shadow:0 6px 16px -6px var(--sage-dim); }
+    .a-btn:active { transform:translateY(0); }
+    .a-btn.secondary { background:var(--bg-card-2); color:var(--text); border:1px solid var(--line); box-shadow:none; }
+    .a-btn.danger { background:var(--clay-dim); color:var(--clay); box-shadow:none; }
+    .a-btn.icon { padding:9px; }
+    .a-btn.xs { padding:6px 12px; font-size:11px; }
     .agenda-root.dark .a-btn:not(.secondary):not(.danger) { color:#1c1418; }
 
+    /* ---------- Selector de paletas (Ajustes) ---------- */
+    .a-palette-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; }
+    .a-palette-option {
+      border:2px solid var(--line); border-radius:14px; padding:14px; cursor:pointer; text-align:left;
+      background:var(--bg); transition:border-color .15s, transform .15s; display:flex; flex-direction:column; gap:10px;
+    }
+    .a-palette-option:hover { transform:translateY(-2px); }
+    .a-palette-option.active { border-color:var(--sage); }
+    .a-palette-swatches { display:flex; gap:6px; }
+    .a-palette-swatch { width:22px; height:22px; border-radius:50%; border:1px solid rgba(0,0,0,0.08); flex-shrink:0; }
+    .a-palette-name { font-size:13px; font-weight:700; display:flex; align-items:center; gap:6px; }
+    .a-palette-preview { display:flex; align-items:center; gap:10px; padding:10px; border-radius:10px; }
+    .a-palette-preview-btn { border:none; border-radius:8px; padding:7px 14px; font-size:11.5px; font-weight:700; color:#fff; }
+    .a-palette-preview-card { flex:1; border-radius:8px; padding:8px 10px; font-size:10.5px; }
+
+    /* ---------- Pantalla de acceso (login / registro) ---------- */
+    .a-auth-shell { min-height:100vh; width:100%; display:flex; align-items:center; justify-content:center; padding:24px; }
+    .a-auth-card {
+      display:flex; width:100%; max-width:760px; border-radius:22px; overflow:hidden;
+      box-shadow:0 30px 80px -20px rgba(43,32,24,0.28); border:1px solid var(--line);
+    }
+    .a-auth-brand {
+      flex:1; min-width:0; padding:40px 34px; display:flex; flex-direction:column; justify-content:space-between;
+      background: linear-gradient(160deg, var(--sage), var(--butter));
+      color:#fff;
+    }
+    .agenda-root.dark .a-auth-brand { color:#1c1418; }
+    .a-auth-brand-dot { width:11px; height:11px; border-radius:50%; background:rgba(255,255,255,0.85); margin-bottom:18px; }
+    .a-auth-form-pane { flex:1; min-width:0; background:var(--bg-card); padding:40px 34px; }
+    .a-auth-tabs { display:flex; gap:6px; margin-bottom:22px; background:var(--bg); padding:4px; border-radius:12px; border:1px solid var(--line); }
+    .a-auth-tab { flex:1; border:none; background:transparent; padding:9px 10px; border-radius:9px; font-weight:700; font-size:12.5px; cursor:pointer; color:var(--text-soft); transition:all .15s; }
+    .a-auth-tab.active { background:var(--sage); color:#fff; }
+    .agenda-root.dark .a-auth-tab.active { color:#1c1418; }
+    .a-auth-field { position:relative; margin-bottom:12px; }
+    .a-auth-field svg { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-faint); }
+    .a-auth-field input { padding-left:36px; }
+    .a-auth-banner { border-radius:10px; padding:9px 12px; font-size:12.5px; margin-bottom:12px; }
+    .a-auth-banner.err { background:var(--clay-dim); color:var(--clay); }
+    .a-auth-banner.ok { background:var(--sage-dim); color:var(--sage); }
+    @media (max-width: 680px) {
+      .a-auth-card { flex-direction:column; max-width:420px; }
+      .a-auth-brand { padding:28px 26px; }
+    }
     .a-pill { font-size:10.5px; padding:3px 9px; border-radius:999px; font-weight:700; letter-spacing:.02em;}
     .a-pill.in { background:var(--sage-dim); color:var(--sage); }
     .a-pill.out { background:var(--clay-dim); color:var(--clay); }
@@ -475,24 +469,19 @@ function Ring({ pct, color = "var(--sage)", size = 78, showLabel = true }) {
 }
 
 const NAV = [
-  { id: "inicio", label: "Inicio", icon: Home, group: "General" },
-  { id: "prioridades", label: "Día", icon: ListChecks, group: "General" },
-  { id: "habitos", label: "Hábitos", icon: Repeat, group: "General" },
-  { id: "calendario", label: "Agenda", icon: Calendar, group: "General" },
-  { id: "notas", label: "Notas", icon: StickyNote, group: "General" },
-  { id: "stats", label: "Stats", icon: BarChart3, group: "General" },
-  { id: "finanzas", label: "Finanzas", icon: Wallet, group: "Negocio" },
-  { id: "comidas", label: "Comidas", icon: UtensilsCrossed, group: "Negocio" },
-  { id: "proyectos", label: "Proyectos", icon: FolderKanban, group: "Negocio" },
-  { id: "objetivos", label: "Metas", icon: Flag, group: "Personal" },
+  { id: "inicio", label: "Inicio", icon: Home, group: "Principal" },
+  { id: "prioridades", label: "Tareas", icon: ListChecks, group: "Principal" },
+  { id: "calendario", label: "Agenda", icon: Calendar, group: "Principal" },
+  { id: "notas", label: "Notas", icon: StickyNote, group: "Principal" },
+  { id: "proyectos", label: "Proyectos", icon: FolderKanban, group: "Trabajo" },
+  { id: "objetivos", label: "Metas", icon: Flag, group: "Trabajo" },
   { id: "diario", label: "Diario", icon: BookOpen, group: "Personal" },
-  { id: "entrenamiento", label: "Entreno", icon: Dumbbell, group: "Personal" },
   { id: "pomodoro", label: "Pomodoro", icon: Timer, group: "Personal" },
   { id: "recordatorios", label: "Recordatorios", icon: Bell, group: "Personal" },
   { id: "ajustes", label: "Ajustes", icon: Settings, group: "Personal" },
 ];
 
-const NAV_GROUP_ORDER = ["General", "Negocio", "Personal"];
+const NAV_GROUP_ORDER = ["Principal", "Trabajo", "Personal"];
 
 /* ============================================================ */
 
@@ -532,22 +521,18 @@ function usePomodoro() {
 function AgendaApp({ session }) {
   const [data, setData, syncStatus] = useSyncedState(session?.user?.id);
   const [tab, setTab] = useState("inicio");
-  const [month, setMonth] = useState(currentMonthKey());
-  const [financeTab, setFinanceTab] = useState("resumen");
   const [searchQuery, setSearchQuery] = useState("");
   const pomodoro = usePomodoro();
   const notifiedRef = useRef(new Set());
+  const colorPalette = data.colorPalette || "earthy";
 
   const searchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return [];
     const out = [];
     data.notes.forEach((n) => { if (n.title.toLowerCase().includes(q) || (n.content || "").toLowerCase().includes(q)) out.push({ icon: StickyNote, label: n.title || "(sin título)", sub: "Nota", tab: "notas" }); });
-    data.recipes.forEach((r) => { if (r.name.toLowerCase().includes(q)) out.push({ icon: ChefHat, label: r.name, sub: "Receta", tab: "comidas" }); });
-    data.transactions.forEach((t) => { if (t.concept.toLowerCase().includes(q)) out.push({ icon: Wallet, label: t.concept, sub: `Finanzas · ${t.date}`, tab: "finanzas" }); });
     data.objectives.forEach((o) => { if (o.title.toLowerCase().includes(q)) out.push({ icon: Flag, label: o.title, sub: "Meta", tab: "objetivos" }); });
     data.projects.forEach((p) => { if (p.name.toLowerCase().includes(q)) out.push({ icon: FolderKanban, label: p.name, sub: "Proyecto", tab: "proyectos" }); });
-    data.habits.forEach((h) => { if (h.name.toLowerCase().includes(q)) out.push({ icon: Repeat, label: h.name, sub: "Hábito", tab: "habitos" }); });
     Object.entries(data.calendarEvents || {}).forEach(([date, evs]) => evs.forEach((e) => { if (e.title.toLowerCase().includes(q)) out.push({ icon: Calendar, label: e.title, sub: `Evento · ${date}`, tab: "calendario" }); }));
     data.reminders.forEach((r) => { if (r.text.toLowerCase().includes(q)) out.push({ icon: Bell, label: r.text, sub: "Recordatorio", tab: "recordatorios" }); });
     return out.slice(0, 8);
@@ -589,30 +574,6 @@ function AgendaApp({ session }) {
     }
   }, [data.wallpaper]);
 
-  /* ---------- derived: finance for selected month ---------- */
-  const monthTx = useMemo(() => data.transactions.filter((t) => monthKey(t.date) === month), [data.transactions, month]);
-  const ingresosMes = monthTx.filter((t) => t.type === "ingreso").reduce((s, t) => s + t.amount, 0);
-  const egresosMes = monthTx.filter((t) => t.type === "egreso").reduce((s, t) => s + t.amount, 0);
-  const ahorroMes = monthTx.filter((t) => t.type === "ahorro").reduce((s, t) => s + t.amount, 0);
-  const retiroMes = monthTx.filter((t) => t.type === "retiro").reduce((s, t) => s + t.amount, 0);
-  const balanceMes = ingresosMes - egresosMes - ahorroMes + retiroMes;
-
-  const pocketBalance = (pocketId) => {
-    const aportes = data.transactions.filter((t) => t.pocketId === pocketId && t.type === "ahorro").reduce((s, t) => s + t.amount, 0);
-    const retiros = data.transactions.filter((t) => t.pocketId === pocketId && t.type === "retiro").reduce((s, t) => s + t.amount, 0);
-    return aportes - retiros;
-  };
-
-  const goalProgress = (goal) => {
-    if (goal.type === "mensual") {
-      const base = data.transactions.filter((t) => t.type === "ingreso" && monthKey(t.date) === month && (!goal.category || t.category === goal.category));
-      const sum = base.reduce((s, t) => s + t.amount, 0);
-      return { current: sum, target: goal.target, pct: goal.target ? sum / goal.target : 0 };
-    }
-    const current = goal.pocketId ? pocketBalance(goal.pocketId) : 0;
-    return { current, target: goal.target, pct: goal.target ? current / goal.target : 0 };
-  };
-
   /* ---------- priorities ---------- */
   const todayList = data.priorities[todayISO()] || [];
   const addPriority = (text) => {
@@ -637,7 +598,7 @@ function AgendaApp({ session }) {
   }, [data.calendarEvents]);
 
   return (
-    <div className={`agenda-root ${data.darkMode ? "dark" : ""}`}>
+    <div className={`agenda-root palette-${colorPalette} ${data.darkMode ? "dark" : ""}`}>
       <GlobalStyle />
       <nav className="a-nav a-nav-mobile">
         {NAV.map((n) => {
@@ -679,11 +640,11 @@ function AgendaApp({ session }) {
       </nav>
 
       <main className="a-main">
-        <div style={{ display: "flex", gap: 10, marginBottom: 18, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 22, alignItems: "center" }}>
           <div style={{ position: "relative", flex: 1 }}>
             <Search size={15} color="var(--text-faint)" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
             <input
-              className="a-input" placeholder="Buscar notas, recetas, movimientos, eventos..."
+              className="a-input" placeholder="Buscar notas, proyectos, metas, eventos..."
               value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
               style={{ paddingLeft: 34 }}
             />
@@ -712,26 +673,16 @@ function AgendaApp({ session }) {
           </div>
         </div>
         {tab === "inicio" && (
-          <InicioTab data={data} patch={patch} todayList={todayList} progressPct={progressPct} ingresosMes={ingresosMes} egresosMes={egresosMes}
-            month={month} goalProgress={goalProgress} goToFinanzas={() => setTab("finanzas")} upcomingEvents={upcomingEvents} />
+          <InicioTab data={data} patch={patch} todayList={todayList} progressPct={progressPct} upcomingEvents={upcomingEvents} goToTab={setTab} />
         )}
         {tab === "prioridades" && <PrioridadesTab list={todayList} onAdd={addPriority} onToggle={togglePriority} onDelete={delPriority} />}
-        {tab === "habitos" && <HabitosTab data={data} patch={patch} />}
-        {tab === "finanzas" && (
-          <FinanzasTab data={data} patch={patch} month={month} setMonth={setMonth} monthTx={monthTx}
-            ingresosMes={ingresosMes} egresosMes={egresosMes} ahorroMes={ahorroMes} retiroMes={retiroMes} balanceMes={balanceMes}
-            goalProgress={goalProgress} pocketBalance={pocketBalance} financeTab={financeTab} setFinanceTab={setFinanceTab} />
-        )}
         {tab === "objetivos" && <ObjetivosTab data={data} patch={patch} />}
         {tab === "proyectos" && <ProyectosTab data={data} patch={patch} />}
-        {tab === "comidas" && <ComidasTab data={data} patch={patch} />}
-        {tab === "entrenamiento" && <EntrenamientoTab data={data} patch={patch} />}
         {tab === "diario" && <DiarioTab data={data} patch={patch} />}
         {tab === "notas" && <NotasTab data={data} patch={patch} />}
         {tab === "calendario" && <CalendarioTab data={data} patch={patch} />}
         {tab === "pomodoro" && <PomodoroTab {...pomodoro} />}
         {tab === "recordatorios" && <RecordatoriosTab data={data} patch={patch} />}
-        {tab === "stats" && <StatsTab data={data} month={month} monthTx={monthTx} />}
         {tab === "ajustes" && <AjustesTab data={data} patch={patch} setData={setData} session={session} />}
       </main>
     </div>
@@ -767,24 +718,40 @@ function AuthScreen() {
   };
 
   return (
-    <div className="agenda-root" style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
+    <div className="agenda-root palette-earthy a-auth-shell" style={{ boxShadow: "none", borderRadius: 0, background: "var(--bg)" }}>
       <GlobalStyle />
-      <div className="a-card" style={{ maxWidth: 360, width: "100%" }}>
-        <h1 className="a-h1 agenda-serif" style={{ textAlign: "center" }}>Mi Agenda 🌿</h1>
-        <p className="a-sub" style={{ textAlign: "center" }}>SAN-ORGANIC — sincronizada entre tus dispositivos.</p>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          <button className={`a-btn ${mode === "login" ? "" : "secondary"}`} style={{ flex: 1, justifyContent: "center" }} onClick={() => setMode("login")}>Iniciar sesión</button>
-          <button className={`a-btn ${mode === "signup" ? "" : "secondary"}`} style={{ flex: 1, justifyContent: "center" }} onClick={() => setMode("signup")}>Crear cuenta</button>
+      <div className="a-auth-card">
+        <div className="a-auth-brand agenda-serif">
+          <div>
+            <span className="a-auth-brand-dot" />
+            <h1 style={{ fontSize: 28, margin: "0 0 8px" }}>Mi Agenda</h1>
+            <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 13.5, opacity: 0.9, lineHeight: 1.5, maxWidth: 260 }}>
+              SAN-ORGANIC — tu agenda, notas, proyectos y metas en un mismo lugar, sincronizados en todos tus dispositivos.
+            </p>
+          </div>
+          <p style={{ fontFamily: "'Inter',sans-serif", fontSize: 11.5, opacity: 0.75, margin: 0 }}>Agenda · Notas · Proyectos · Metas</p>
         </div>
-        <form onSubmit={submit}>
-          <input className="a-input" type="email" required placeholder="Correo" value={email} onChange={(e) => setEmail(e.target.value)} style={{ marginBottom: 10 }} />
-          <input className="a-input" type="password" required minLength={6} placeholder="Contraseña (mínimo 6 caracteres)" value={password} onChange={(e) => setPassword(e.target.value)} style={{ marginBottom: 14 }} />
-          {error && <p style={{ color: "var(--clay)", fontSize: 12.5, marginBottom: 10 }}>{error}</p>}
-          {notice && <p style={{ color: "var(--sage)", fontSize: 12.5, marginBottom: 10 }}>{notice}</p>}
-          <button className="a-btn" type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center" }}>
-            {loading ? "Un momento..." : mode === "login" ? "Iniciar sesión" : "Crear cuenta"}
-          </button>
-        </form>
+        <div className="a-auth-form-pane">
+          <div className="a-auth-tabs">
+            <button type="button" className={`a-auth-tab ${mode === "login" ? "active" : ""}`} onClick={() => setMode("login")}>Iniciar sesión</button>
+            <button type="button" className={`a-auth-tab ${mode === "signup" ? "active" : ""}`} onClick={() => setMode("signup")}>Crear cuenta</button>
+          </div>
+          <form onSubmit={submit}>
+            <div className="a-auth-field">
+              <Mail size={14} />
+              <input className="a-input" type="email" required placeholder="Correo" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div className="a-auth-field">
+              <Lock size={14} />
+              <input className="a-input" type="password" required minLength={6} placeholder="Contraseña (mínimo 6 caracteres)" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </div>
+            {error && <div className="a-auth-banner err">{error}</div>}
+            {notice && <div className="a-auth-banner ok">{notice}</div>}
+            <button className="a-btn" type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: 4 }}>
+              {loading ? "Un momento..." : mode === "login" ? "Iniciar sesión" : "Crear cuenta"}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
@@ -803,9 +770,9 @@ export default function Root() {
 
   if (checking) {
     return (
-      <div className="agenda-root" style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
+      <div className="agenda-root palette-earthy" style={{ alignItems: "center", justifyContent: "center", padding: 40, boxShadow: "none", background: "var(--bg)" }}>
         <GlobalStyle />
-        <Loader2 size={22} className="a-spin" />
+        <Loader2 size={22} className="a-spin" color="var(--sage)" />
       </div>
     );
   }
@@ -814,10 +781,15 @@ export default function Root() {
 }
 
 /* ================= INICIO ================= */
-function InicioTab({ data, patch, todayList, progressPct, ingresosMes, egresosMes, month, goalProgress, goToFinanzas, upcomingEvents }) {
-  const topGoals = data.goals.slice(0, 2);
+function InicioTab({ data, patch, todayList, progressPct, upcomingEvents, goToTab }) {
+  const activeObjectives = data.objectives.filter((o) => (o.milestones || []).some((m) => !m.done) || (o.milestones || []).length === 0).slice(0, 2);
+  const objectiveProgress = (o) => {
+    const total = (o.milestones || []).length;
+    const done = (o.milestones || []).filter((m) => m.done).length;
+    return { done, total, pct: total ? done / total : 0 };
+  };
   const [now, setNow] = useState(new Date());
-  const [quickAdd, setQuickAdd] = useState(null); // 'ingreso' | 'egreso' | 'nota' | 'evento' | null
+  const [quickAdd, setQuickAdd] = useState(null); // 'tarea' | 'nota' | 'evento' | null
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
@@ -830,17 +802,16 @@ function InicioTab({ data, patch, todayList, progressPct, ingresosMes, egresosMe
       <div className="a-row" style={{ alignItems: "flex-start", marginBottom: 4, flexWrap: "wrap", gap: 12 }}>
         <div>
           <h1 className="a-h1 agenda-serif">{data.name ? `Hola, ${data.name} 🌿` : "Hola 🌿"}</h1>
-          <p className="a-sub" style={{ marginBottom: 0 }}>Tu resumen de {monthLabel(month)}.</p>
+          <p className="a-sub" style={{ marginBottom: 0, textTransform: "capitalize" }}>{dayLabel}</p>
         </div>
         <div className="a-card" style={{ padding: "10px 16px", textAlign: "right" }}>
-          <div className="a-sub" style={{ margin: 0, textTransform: "capitalize" }}>{dayLabel}</div>
+          <div className="a-sub" style={{ margin: 0 }}>Hora actual</div>
           <div className="agenda-mono" style={{ fontSize: 20, fontWeight: 700 }}>{timeLabel}</div>
         </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "14px 0 20px" }}>
-        <button className="a-btn xs" onClick={() => setQuickAdd("ingreso")}><Plus size={12} /> Ingreso</button>
-        <button className="a-btn secondary xs" onClick={() => setQuickAdd("egreso")}><Plus size={12} /> Gasto</button>
+        <button className="a-btn xs" onClick={() => setQuickAdd("tarea")}><Plus size={12} /> Tarea</button>
         <button className="a-btn secondary xs" onClick={() => setQuickAdd("nota")}><Plus size={12} /> Nota</button>
         <button className="a-btn secondary xs" onClick={() => setQuickAdd("evento")}><Plus size={12} /> Evento</button>
       </div>
@@ -853,12 +824,12 @@ function InicioTab({ data, patch, todayList, progressPct, ingresosMes, egresosMe
           <div className="a-stat-num agenda-mono">{Math.round(progressPct * 100)}%</div>
         </div>
         <div className="a-card">
-          <div className="a-stat-label">Ingresos del mes</div>
-          <div className="a-stat-num agenda-mono" style={{ color: "var(--sage)" }}>{formatCLP(ingresosMes)}</div>
+          <div className="a-stat-label">Tareas de hoy</div>
+          <div className="a-stat-num agenda-mono">{todayList.filter(t => t.done).length}/{todayList.length}</div>
         </div>
         <div className="a-card">
-          <div className="a-stat-label">Egresos del mes</div>
-          <div className="a-stat-num agenda-mono" style={{ color: "var(--clay)" }}>{formatCLP(egresosMes)}</div>
+          <div className="a-stat-label">Próximos eventos</div>
+          <div className="a-stat-num agenda-mono">{upcomingEvents.length}</div>
         </div>
       </div>
 
@@ -892,21 +863,21 @@ function InicioTab({ data, patch, todayList, progressPct, ingresosMes, egresosMe
         </div>
       </div>
 
-      {topGoals.length > 0 && (
+      {activeObjectives.length > 0 && (
         <div className="a-card">
           <div className="a-row" style={{ marginBottom: 12 }}>
-            <h3 style={{ margin: 0, fontSize: 15 }}>Tus metas financieras</h3>
-            <button className="a-btn secondary" onClick={goToFinanzas} style={{ fontSize: 11.5 }}>Ver todas</button>
+            <h3 style={{ margin: 0, fontSize: 15 }}>Tus metas</h3>
+            <button className="a-btn secondary" onClick={() => goToTab("objetivos")} style={{ fontSize: 11.5 }}>Ver todas</button>
           </div>
           <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-            {topGoals.map((g) => {
-              const p = goalProgress(g);
+            {activeObjectives.map((o) => {
+              const p = objectiveProgress(o);
               return (
-                <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <Ring pct={p.pct} color={p.pct >= 1 ? "var(--sage)" : "var(--butter)"} />
                   <div>
-                    <div style={{ fontWeight: 600, fontSize: 13.5 }}>{g.name}</div>
-                    <div className="a-sub agenda-mono" style={{ margin: 0 }}>{formatCLP(p.current)} / {formatCLP(p.target)}</div>
+                    <div style={{ fontWeight: 600, fontSize: 13.5 }}>{o.title}</div>
+                    <div className="a-sub" style={{ margin: 0 }}>{p.done}/{p.total || "—"} hitos</div>
                   </div>
                 </div>
               );
@@ -920,21 +891,18 @@ function InicioTab({ data, patch, todayList, progressPct, ingresosMes, egresosMe
 
 /* ================= QUICK ADD (atajos desde Inicio) ================= */
 function QuickAddModal({ type, data, patch, onClose }) {
-  const [concept, setConcept] = useState("");
-  const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState(data.categories[type === "egreso" ? "egreso" : "ingreso"]?.[0] || "");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [evDate, setEvDate] = useState(todayISO());
   const [evTime, setEvTime] = useState("");
 
-  const titles = { ingreso: "Nuevo ingreso", egreso: "Nuevo gasto", nota: "Nueva nota", evento: "Nuevo evento" };
+  const titles = { tarea: "Nueva tarea de hoy", nota: "Nueva nota", evento: "Nuevo evento" };
 
   const save = () => {
-    if (type === "ingreso" || type === "egreso") {
-      const amt = parseFloat(amount);
-      if (!concept.trim() || !amt) return;
-      patch((d) => ({ transactions: [{ id: uid(), type, concept, amount: amt, category, date: todayISO() }, ...d.transactions] }));
+    if (type === "tarea") {
+      if (!title.trim()) return;
+      const today = todayISO();
+      patch((d) => ({ priorities: { ...d.priorities, [today]: [...(d.priorities[today] || []), { id: uid(), text: title, done: false }] } }));
     } else if (type === "nota") {
       if (!title.trim()) return;
       patch((d) => ({ notes: [{ id: uid(), title, content, date: todayISO(), color: "#ffffff", done: false, tags: [] }, ...d.notes] }));
@@ -953,16 +921,8 @@ function QuickAddModal({ type, data, patch, onClose }) {
           <X size={16} style={{ cursor: "pointer" }} onClick={onClose} />
         </div>
 
-        {(type === "ingreso" || type === "egreso") && (
-          <>
-            <input className="a-input" placeholder="Concepto" value={concept} onChange={(e) => setConcept(e.target.value)} style={{ marginBottom: 8 }} autoFocus />
-            <div className="a-grid a-grid-2" style={{ marginBottom: 8 }}>
-              <input className="a-input" type="number" placeholder="Monto" value={amount} onChange={(e) => setAmount(e.target.value)} />
-              <select className="a-select" value={category} onChange={(e) => setCategory(e.target.value)}>
-                {(data.categories[type] || []).map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-          </>
+        {type === "tarea" && (
+          <input className="a-input" placeholder="¿Qué necesitas hacer hoy?" value={title} onChange={(e) => setTitle(e.target.value)} style={{ marginBottom: 8 }} autoFocus />
         )}
 
         {type === "nota" && (
@@ -1009,545 +969,6 @@ function PrioridadesTab({ list, onAdd, onToggle, onDelete }) {
             <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => onDelete(p.id)} />
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-/* ================= HABITOS (diario con cantidad/días, o meta semanal sin días fijos) ================= */
-function HabitosTab({ data, patch }) {
-  const [mode, setMode] = useState("daily");
-  const [name, setName] = useState("");
-  const [emoji, setEmoji] = useState("🌿");
-  const [qty, setQty] = useState(1);
-  const [unit, setUnit] = useState("");
-  const [days, setDays] = useState([1, 2, 3, 4, 5]);
-  const [weeklyCount, setWeeklyCount] = useState(3);
-  const today = todayISO();
-  const weekStart = startOfWeek(today);
-
-  const toggleDay = (d) => setDays((ds) => ds.includes(d) ? ds.filter((x) => x !== d) : [...ds, d]);
-
-  const addHabit = () => {
-    if (!name.trim()) return;
-    const base = { id: uid(), name, emoji, mode, unit: unit.trim(), log: {} };
-    patch((d) => ({
-      habits: [...d.habits, mode === "daily"
-        ? { ...base, targetQty: qty || 1, targetDays: days.length ? days : [0,1,2,3,4,5,6] }
-        : { ...base, targetCount: weeklyCount || 1 }],
-    }));
-    setName(""); setEmoji("🌿"); setQty(1); setUnit(""); setDays([1,2,3,4,5]); setWeeklyCount(3);
-  };
-  const removeHabit = (hid) => patch((d) => ({ habits: d.habits.filter((h) => h.id !== hid) }));
-
-  const bumpWeekly = (hid, delta) => {
-    patch((d) => ({ habits: d.habits.map((h) => h.id === hid ? { ...h, log: { ...h.log, [today]: Math.max(0, (h.log[today] || 0) + delta) } } : h) }));
-  };
-
-  const weekProgress = (h) => habitWeekProgress(h, today, weekStart);
-  const [selectedDay, setSelectedDay] = useState({}); // { habitId: isoDate }
-
-  return (
-    <div>
-      <h1 className="a-h1 agenda-serif">Hábitos</h1>
-      <p className="a-sub">Hábitos diarios con días fijos (ej: agua, lectura, horario de trabajo) o metas semanales sin días fijos (ej: 3 rutinas a la semana).</p>
-
-      <div className="a-card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Nuevo hábito</h3>
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <button className={`a-btn ${mode === "daily" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setMode("daily")}>Diario con días fijos</button>
-          <button className={`a-btn ${mode === "weekly" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setMode("weekly")}>Meta semanal (sin días fijos)</button>
-        </div>
-
-        <div className="a-grid a-grid-4" style={{ marginBottom: 10 }}>
-          <input className="a-input" placeholder="Emoji" value={emoji} onChange={(e) => setEmoji(e.target.value)} />
-          <input className="a-input" style={{ gridColumn: "span 2" }} placeholder="Nombre del hábito" value={name} onChange={(e) => setName(e.target.value)} />
-          <input className="a-input" placeholder="Unidad (ej: vasos, min)" value={unit} onChange={(e) => setUnit(e.target.value)} />
-        </div>
-
-        {mode === "daily" ? (
-          <>
-            <div style={{ marginBottom: 10 }}>
-              <div className="a-stat-label">Cantidad diaria (ej: 3 vasos, 30 min)</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <button type="button" className="a-btn secondary xs" onClick={() => setQty((q) => Math.max(1, q - 1))}>−</button>
-                <input className="a-input" type="number" min={1} style={{ textAlign: "center", maxWidth: 90 }} value={qty} onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))} />
-                <button type="button" className="a-btn secondary xs" onClick={() => setQty((q) => q + 1)}>+</button>
-              </div>
-            </div>
-            <div className="a-stat-label">Días de la semana</div>
-            <div style={{ display: "flex", gap: 6, margin: "6px 0 12px" }}>
-              {WEEKDAYS_MON_FIRST.map((dNum) => (
-                <div key={dNum} className={`a-daychip ${days.includes(dNum) ? "on" : ""}`} onClick={() => toggleDay(dNum)}>{WEEKDAYS[dNum]}</div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <div style={{ marginBottom: 10 }}>
-            <div className="a-stat-label">Veces por semana (ej: 3)</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button type="button" className="a-btn secondary xs" onClick={() => setWeeklyCount((q) => Math.max(1, q - 1))}>−</button>
-              <input className="a-input" type="number" min={1} style={{ textAlign: "center", maxWidth: 90 }} value={weeklyCount} onChange={(e) => setWeeklyCount(Math.max(1, parseInt(e.target.value) || 1))} />
-              <button type="button" className="a-btn secondary xs" onClick={() => setWeeklyCount((q) => q + 1)}>+</button>
-            </div>
-          </div>
-        )}
-        <button className="a-btn" onClick={addHabit}><Plus size={14} /> Crear hábito</button>
-      </div>
-
-      <div className="a-grid a-grid-2">
-        {data.habits.map((h) => {
-          const wp = weekProgress(h);
-          const isWeekly = h.mode === "weekly";
-          const isCheckbox = !isWeekly && h.targetQty === 1;
-          const activeIso = selectedDay[h.id] || today;
-          const activeQty = h.log[activeIso] || 0;
-          const weeklyTarget = !isWeekly ? h.targetQty * h.targetDays.length : 0;
-
-          const setQtyFor = (iso, val) => {
-            patch((d) => ({ habits: d.habits.map((x) => x.id === h.id ? { ...x, log: { ...x.log, [iso]: Math.max(0, val) } } : x) }));
-          };
-
-          return (
-            <div className="a-card" key={h.id}>
-              <div className="a-row" style={{ alignItems: "flex-start" }}>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <Ring pct={wp.pct} size={58} color={wp.pct >= 1 ? "var(--sage)" : "var(--butter)"} />
-                  <div>
-                    <div className="a-row" style={{ gap: 6, justifyContent: "flex-start" }}>
-                      <span style={{ fontWeight: 600 }}>{h.emoji} {h.name}</span>
-                      {habitStreak(h, today) > 0 && <span className="a-pill ahorro">🔥 {habitStreak(h, today)}</span>}
-                    </div>
-                    {isWeekly ? (
-                      <div className="a-sub" style={{ margin: 0 }}>{wp.weekTotal}/{h.targetCount} {h.unit || "veces"} esta semana</div>
-                    ) : (
-                      <div className="a-sub" style={{ margin: 0 }}>{wp.done}/{wp.required} días completados esta semana</div>
-                    )}
-                  </div>
-                </div>
-                <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => removeHabit(h.id)} />
-              </div>
-              <hr className="a-divider" />
-
-              {isWeekly ? (
-                <div className="a-row">
-                  <span className="a-sub" style={{ margin: 0 }}>Esta semana</span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <button className="a-btn secondary xs" onClick={() => bumpWeekly(h.id, -1)}>−</button>
-                    <span className="agenda-mono" style={{ minWidth: 50, textAlign: "center" }}>{wp.weekTotal}/{h.targetCount}</span>
-                    <button className="a-btn secondary xs" onClick={() => bumpWeekly(h.id, 1)}>+</button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="a-stat-label">Marca cada día por separado</div>
-                  <div style={{ display: "flex", gap: 6, margin: "6px 0 12px" }}>
-                    {WEEKDAYS_MON_FIRST.map((dNum) => {
-                      const iso = toISO(addDays(weekStart, WEEKDAYS_MON_FIRST.indexOf(dNum)));
-                      const isTarget = h.targetDays.includes(dNum);
-                      const isFuture = iso > today;
-                      const done = (h.log[iso] || 0) >= h.targetQty;
-                      const isActive = activeIso === iso;
-                      let style = {};
-                      if (!isTarget) style = { opacity: 0.3 };
-                      else if (isFuture) style = { opacity: 0.4, cursor: "not-allowed" };
-                      return (
-                        <div key={dNum}
-                          className={`a-daychip ${done ? "on" : ""}`}
-                          style={{ ...style, outline: isActive ? "2px solid var(--sage)" : "none", cursor: isTarget && !isFuture ? "pointer" : style.cursor }}
-                          onClick={() => { if (isTarget && !isFuture) setSelectedDay((s) => ({ ...s, [h.id]: iso })); }}>
-                          {WEEKDAYS[dNum]}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="a-row">
-                    <span className="a-sub" style={{ margin: 0 }}>
-                      {activeIso === today ? "Hoy" : new Date(activeIso + "T00:00:00").toLocaleDateString("es-CL", { weekday: "long", day: "numeric" })}
-                    </span>
-                    {isCheckbox ? (
-                      <div className={`a-check ${activeQty >= 1 ? "done" : ""}`} style={{ width: 26, height: 26 }} onClick={() => setQtyFor(activeIso, activeQty >= 1 ? 0 : 1)}>
-                        {activeQty >= 1 && <Check size={14} />}
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <button className="a-btn secondary xs" onClick={() => setQtyFor(activeIso, activeQty - 1)}>−</button>
-                        <span className="agenda-mono" style={{ minWidth: 60, textAlign: "center" }}>{activeQty}/{h.targetQty} {h.unit}</span>
-                        <button className="a-btn secondary xs" onClick={() => setQtyFor(activeIso, activeQty + 1)}>+</button>
-                      </div>
-                    )}
-                  </div>
-                  {h.targetQty > 1 && (
-                    <div style={{ marginTop: 12 }}>
-                      <div className="a-row" style={{ marginBottom: 4 }}>
-                        <span className="a-sub" style={{ margin: 0 }}>Acumulado de la semana</span>
-                        <span className="agenda-mono a-sub" style={{ margin: 0 }}>{wp.weekTotal}/{weeklyTarget} {h.unit} · {weeklyTarget ? Math.round((wp.weekTotal / weeklyTarget) * 100) : 0}%</span>
-                      </div>
-                      <div style={{ height: 6, background: "var(--line)", borderRadius: 4, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${weeklyTarget ? Math.min(100, (wp.weekTotal / weeklyTarget) * 100) : 0}%`, background: "var(--butter)" }} />
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ================= FINANZAS ================= */
-function FinanzasTab({ data, patch, month, setMonth, monthTx, ingresosMes, egresosMes, ahorroMes, retiroMes, balanceMes, goalProgress, pocketBalance, financeTab, setFinanceTab }) {
-  const sub = [
-    { id: "resumen", label: "Resumen" },
-    { id: "movimientos", label: "Movimientos" },
-    { id: "categorias", label: "Categorías" },
-    { id: "metas", label: "Metas" },
-    { id: "ahorros", label: "Ahorros" },
-  ];
-  return (
-    <div>
-      <div className="a-row" style={{ marginBottom: 4 }}>
-        <div>
-          <h1 className="a-h1 agenda-serif">Finanzas</h1>
-          <p className="a-sub">Ingresos, egresos, ahorros, metas y categorías — todo por mes.</p>
-        </div>
-        <div className="a-monthnav">
-          <button onClick={() => setMonth(shiftMonth(month, -1))}><ChevronLeft size={15} /></button>
-          <span className="agenda-mono" style={{ fontSize: 13, textTransform: "capitalize", minWidth: 130, textAlign: "center" }}>{monthLabel(month)}</span>
-          <button onClick={() => setMonth(shiftMonth(month, 1))}><ChevronRight size={15} /></button>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 8, margin: "18px 0", flexWrap: "wrap" }}>
-        {sub.map((s) => (
-          <button key={s.id} className={`a-btn ${financeTab === s.id ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setFinanceTab(s.id)}>{s.label}</button>
-        ))}
-      </div>
-
-      {financeTab === "resumen" && (
-        <ResumenFinanzas ingresosMes={ingresosMes} egresosMes={egresosMes} ahorroMes={ahorroMes} retiroMes={retiroMes} balanceMes={balanceMes} data={data} goalProgress={goalProgress} />
-      )}
-      {financeTab === "movimientos" && <MovimientosFinanzas data={data} patch={patch} monthTx={monthTx} month={month} />}
-      {financeTab === "categorias" && <CategoriasFinanzas data={data} patch={patch} />}
-      {financeTab === "metas" && <MetasFinanzas data={data} patch={patch} goalProgress={goalProgress} />}
-      {financeTab === "ahorros" && <AhorrosFinanzas data={data} patch={patch} pocketBalance={pocketBalance} />}
-    </div>
-  );
-}
-
-function ResumenFinanzas({ ingresosMes, egresosMes, ahorroMes, retiroMes, balanceMes, data, goalProgress }) {
-  return (
-    <div>
-      <div className="a-grid a-grid-4" style={{ marginBottom: 18 }}>
-        <div className="a-card">
-          <div className="a-row"><TrendingUp size={15} color="var(--sage)" /><span className="a-pill in">Ingresos</span></div>
-          <div className="a-stat-num agenda-mono" style={{ marginTop: 8 }}>{formatCLP(ingresosMes)}</div>
-        </div>
-        <div className="a-card">
-          <div className="a-row"><TrendingDown size={15} color="var(--clay)" /><span className="a-pill out">Egresos</span></div>
-          <div className="a-stat-num agenda-mono" style={{ marginTop: 8 }}>{formatCLP(egresosMes)}</div>
-        </div>
-        <div className="a-card">
-          <div className="a-row"><PiggyBank size={15} color="var(--butter)" /><span className="a-pill ahorro">Ahorrado</span></div>
-          <div className="a-stat-num agenda-mono" style={{ marginTop: 8 }}>{formatCLP(ahorroMes - retiroMes)}</div>
-        </div>
-        <div className="a-card">
-          <div className="a-stat-label">Balance disponible</div>
-          <div className="a-stat-num agenda-mono" style={{ color: balanceMes >= 0 ? "var(--sage)" : "var(--clay)" }}>{formatCLP(balanceMes)}</div>
-        </div>
-      </div>
-
-      <div className="a-card">
-        <h3 style={{ marginTop: 0, fontSize: 15 }}>Progreso de metas este mes</h3>
-        {data.goals.length === 0 && <p className="a-sub">Crea tu primera meta en la pestaña "Metas".</p>}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 22, marginTop: 10 }}>
-          {data.goals.map((g) => {
-            const p = goalProgress(g);
-            return (
-              <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <Ring pct={p.pct} color={p.pct >= 1 ? "var(--sage)" : "var(--butter)"} />
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{g.name}</div>
-                  <div className="a-sub" style={{ margin: 0 }}>
-                    {g.type === "mensual" ? `Mensual · ${g.category ? g.category : "todos los ingresos"}` : "Meta a plazo fijo"}
-                  </div>
-                  <div className="agenda-mono" style={{ fontSize: 12.5 }}>{formatCLP(p.current)} / {formatCLP(p.target)}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MovimientosFinanzas({ data, patch, monthTx, month }) {
-  const [type, setType] = useState("ingreso");
-  const [concept, setConcept] = useState("");
-  const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState(data.categories.ingreso[0] || "");
-  const [pocketId, setPocketId] = useState(data.pockets[0]?.id || "");
-  const [date, setDate] = useState(todayISO());
-
-  const isPocketType = type === "ahorro" || type === "retiro";
-  const cats = data.categories[type] || [];
-  useEffect(() => { if (!isPocketType) setCategory((data.categories[type] || [])[0] || ""); }, [type]); // eslint-disable-line
-
-  const addTx = () => {
-    const amt = parseFloat(amount);
-    if (!amt) return;
-    if (isPocketType && !pocketId) return;
-    if (!isPocketType && !concept.trim()) return;
-    const finalConcept = isPocketType
-      ? (concept.trim() || (type === "ahorro" ? "Aporte a ahorro" : "Retiro de ahorro"))
-      : concept;
-    patch((d) => ({
-      transactions: [
-        { id: uid(), type, concept: finalConcept, amount: amt, category: isPocketType ? "Ahorro" : category, date, pocketId: isPocketType ? pocketId : undefined },
-        ...d.transactions,
-      ],
-    }));
-    setConcept(""); setAmount("");
-  };
-  const delTx = (id) => patch((d) => ({ transactions: d.transactions.filter((t) => t.id !== id) }));
-
-  const typeLabel = { ingreso: "↑ Ingreso", egreso: "↓ Egreso", ahorro: "🐷 Aporte a ahorro", retiro: "↩ Retiro de ahorro" };
-  const pillClass = { ingreso: "in", egreso: "out", ahorro: "ahorro", retiro: "chip" };
-  const pillIcon = { ingreso: "↑", egreso: "↓", ahorro: "🐷", retiro: "↩" };
-
-  return (
-    <div>
-      <div className="a-card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Registrar movimiento</h3>
-        <div className="a-grid a-grid-2" style={{ marginBottom: 10 }}>
-          <select className="a-select" value={type} onChange={(e) => setType(e.target.value)}>
-            <option value="ingreso">↑ Ingreso</option>
-            <option value="egreso">↓ Egreso</option>
-            <option value="ahorro">🐷 Aporte a ahorro</option>
-            <option value="retiro">↩ Retiro de ahorro</option>
-          </select>
-          {isPocketType ? (
-            <select className="a-select" value={pocketId} onChange={(e) => setPocketId(e.target.value)}>
-              {data.pockets.length === 0 && <option value="">Crea un fondo primero en "Ahorros"</option>}
-              {data.pockets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          ) : (
-            <select className="a-select" value={category} onChange={(e) => setCategory(e.target.value)}>
-              {cats.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          )}
-        </div>
-        <div className="a-grid a-grid-3" style={{ marginBottom: 10 }}>
-          <input className="a-input" placeholder={isPocketType ? "Concepto (opcional)" : "Concepto (ej: venta empanadas)"} value={concept} onChange={(e) => setConcept(e.target.value)} />
-          <input className="a-input" type="number" placeholder="Monto" value={amount} onChange={(e) => setAmount(e.target.value)} />
-          <input className="a-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        </div>
-        <button className="a-btn" onClick={addTx}><Plus size={14} /> Agregar</button>
-      </div>
-
-      <div className="a-card">
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Movimientos de {monthLabel(month)}</h3>
-        {monthTx.length === 0 && <p className="a-sub">Sin movimientos este mes.</p>}
-        {monthTx.map((t) => (
-          <div className="a-list-item" key={t.id}>
-            <span className={`a-pill ${pillClass[t.type]}`}>{pillIcon[t.type]}</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13.5 }}>{t.concept}</div>
-              <div className="a-sub" style={{ margin: 0, fontSize: 11.5 }}>
-                {t.type === "ahorro" || t.type === "retiro" ? (data.pockets.find((p) => p.id === t.pocketId)?.name || "Ahorro") : t.category} · {t.date}
-              </div>
-            </div>
-            <span className="agenda-mono" style={{ color: t.type === "ingreso" || t.type === "retiro" ? "var(--sage)" : "var(--clay)" }}>{formatCLP(t.amount)}</span>
-            <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delTx(t.id)} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function CategoriasFinanzas({ data, patch }) {
-  const [newIn, setNewIn] = useState("");
-  const [newOut, setNewOut] = useState("");
-
-  const addCat = (type, val, clear) => {
-    if (!val.trim()) return;
-    patch((d) => ({ categories: { ...d.categories, [type]: [...d.categories[type], val.trim()] } }));
-    clear("");
-  };
-  const delCat = (type, cat) => {
-    patch((d) => ({ categories: { ...d.categories, [type]: d.categories[type].filter((c) => c !== cat) } }));
-  };
-
-  return (
-    <div className="a-grid a-grid-2">
-      <div className="a-card">
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Categorías de ingreso</h3>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-          {data.categories.ingreso.map((c) => (
-            <span key={c} className="a-pill chip" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {c} <X size={11} style={{ cursor: "pointer" }} onClick={() => delCat("ingreso", c)} />
-            </span>
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input className="a-input" placeholder="Nueva categoría..." value={newIn} onChange={(e) => setNewIn(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addCat("ingreso", newIn, setNewIn)} />
-          <button className="a-btn secondary icon" onClick={() => addCat("ingreso", newIn, setNewIn)}><Plus size={14} /></button>
-        </div>
-      </div>
-
-      <div className="a-card">
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Categorías de egreso</h3>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-          {data.categories.egreso.map((c) => (
-            <span key={c} className="a-pill chip" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {c} <X size={11} style={{ cursor: "pointer" }} onClick={() => delCat("egreso", c)} />
-            </span>
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input className="a-input" placeholder="Nueva categoría..." value={newOut} onChange={(e) => setNewOut(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addCat("egreso", newOut, setNewOut)} />
-          <button className="a-btn secondary icon" onClick={() => addCat("egreso", newOut, setNewOut)}><Plus size={14} /></button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MetasFinanzas({ data, patch, goalProgress }) {
-  const [name, setName] = useState("");
-  const [type, setType] = useState("mensual");
-  const [target, setTarget] = useState("");
-  const [category, setCategory] = useState("");
-  const [pocketId, setPocketId] = useState(data.pockets[0]?.id || "");
-
-  const addGoal = () => {
-    const t = parseFloat(target);
-    if (!name.trim() || !t) return;
-    patch((d) => ({
-      goals: [...d.goals, type === "mensual" ? { id: uid(), name, type, target: t, category: category || null } : { id: uid(), name, type, target: t, pocketId: pocketId || null }],
-    }));
-    setName(""); setTarget("");
-  };
-  const delGoal = (id) => patch((d) => ({ goals: d.goals.filter((g) => g.id !== id) }));
-  const setGoalCategory = (id, cat) => patch((d) => ({ goals: d.goals.map((g) => g.id === id ? { ...g, category: cat || null } : g) }));
-
-  return (
-    <div>
-      <div className="a-card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Nueva meta</h3>
-        <p className="a-sub">Una meta <b>mensual</b> suma <b>todos tus ingresos del mes</b> por defecto — elige "Todos los ingresos" salvo que quieras seguir solo una categoría específica (ej. solo "Sueldo"). Una meta a <b>plazo fijo</b> se compara con el saldo de un fondo de ahorro.</p>
-        <div className="a-grid a-grid-2" style={{ marginBottom: 10 }}>
-          <input className="a-input" placeholder="Nombre de la meta" value={name} onChange={(e) => setName(e.target.value)} />
-          <select className="a-select" value={type} onChange={(e) => setType(e.target.value)}>
-            <option value="mensual">Meta mensual recurrente</option>
-            <option value="fijo">Meta a plazo fijo (ligada a un ahorro)</option>
-          </select>
-        </div>
-        <div className="a-grid a-grid-2" style={{ marginBottom: 10 }}>
-          <input className="a-input" type="number" placeholder="Monto objetivo" value={target} onChange={(e) => setTarget(e.target.value)} />
-          {type === "mensual" ? (
-            <select className="a-select" value={category} onChange={(e) => setCategory(e.target.value)}>
-              <option value="">Todos los ingresos</option>
-              {data.categories.ingreso.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          ) : (
-            <select className="a-select" value={pocketId} onChange={(e) => setPocketId(e.target.value)}>
-              <option value="">Sin fondo asignado aún</option>
-              {data.pockets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          )}
-        </div>
-        <button className="a-btn" onClick={addGoal}><Target size={14} /> Crear meta</button>
-      </div>
-
-      <div className="a-grid a-grid-2">
-        {data.goals.map((g) => {
-          const p = goalProgress(g);
-          return (
-            <div className="a-card" key={g.id}>
-              <div className="a-row">
-                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                  <Ring pct={p.pct} color={p.pct >= 1 ? "var(--sage)" : "var(--butter)"} size={60} />
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{g.name}</div>
-                    <div className="a-sub" style={{ margin: 0 }}>{g.type === "mensual" ? "Mensual" : "Plazo fijo"}</div>
-                    <div className="agenda-mono" style={{ fontSize: 12.5 }}>{formatCLP(p.current)} / {formatCLP(p.target)}</div>
-                  </div>
-                </div>
-                <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delGoal(g.id)} />
-              </div>
-              {g.type === "mensual" && (
-                <div style={{ marginTop: 10 }}>
-                  <div className="a-stat-label">Toma como base</div>
-                  <select className="a-select" value={g.category || ""} onChange={(e) => setGoalCategory(g.id, e.target.value)}>
-                    <option value="">Todos los ingresos</option>
-                    {data.categories.ingreso.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function AhorrosFinanzas({ data, patch, pocketBalance }) {
-  const [name, setName] = useState("");
-  const [area, setArea] = useState("Personal");
-  const [target, setTarget] = useState("");
-
-  const addPocket = () => {
-    if (!name.trim()) return;
-    patch((d) => ({ pockets: [...d.pockets, { id: uid(), name, area, target: parseFloat(target) || 0 }] }));
-    setName(""); setTarget("");
-  };
-  const delPocket = (id) => patch((d) => ({ pockets: d.pockets.filter((p) => p.id !== id) }));
-
-  return (
-    <div>
-      <div className="a-card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Nuevo fondo de ahorro</h3>
-        <p className="a-sub">Crea fondos separados por área. Los aportes y retiros se registran desde "Movimientos".</p>
-        <div className="a-grid a-grid-3" style={{ marginBottom: 10 }}>
-          <input className="a-input" placeholder="Nombre (ej: Nuevo horno)" value={name} onChange={(e) => setName(e.target.value)} />
-          <input className="a-input" placeholder="Área (ej: SAN-ORGANIC)" value={area} onChange={(e) => setArea(e.target.value)} />
-          <input className="a-input" type="number" placeholder="Meta (opcional)" value={target} onChange={(e) => setTarget(e.target.value)} />
-        </div>
-        <button className="a-btn" onClick={addPocket}><PiggyBank size={14} /> Crear fondo</button>
-      </div>
-
-      <div className="a-grid a-grid-2">
-        {data.pockets.map((p) => {
-          const current = pocketBalance(p.id);
-          return (
-            <div className="a-card" key={p.id}>
-              <div className="a-row">
-                <div>
-                  <div style={{ fontWeight: 600 }}>{p.name}</div>
-                  <div className="a-sub" style={{ margin: 0 }}>{p.area}</div>
-                </div>
-                <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delPocket(p.id)} />
-              </div>
-              <div className="agenda-mono" style={{ fontSize: 18, margin: "10px 0 2px", fontWeight: 600 }}>
-                {formatCLP(current)}{p.target ? <span className="a-sub" style={{ fontSize: 13 }}> / {formatCLP(p.target)}</span> : null}
-              </div>
-              {p.target > 0 && (
-                <div style={{ height: 6, background: "var(--line)", borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${Math.min(100, (current / p.target) * 100)}%`, background: "var(--sage)" }} />
-                </div>
-              )}
-            </div>
-          );
-        })}
       </div>
     </div>
   );
@@ -1722,370 +1143,6 @@ function ProyectosTab({ data, patch }) {
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-/* ================= COMIDAS + RECETAS ================= */
-const MEAL_SLOTS = [
-  { id: "desayuno", label: "Desayuno" },
-  { id: "almuerzo", label: "Almuerzo" },
-  { id: "cena", label: "Cena" },
-  { id: "snack", label: "Snack" },
-];
-
-/* Calcula el costo de una receta a partir de sus insumos (food cost) */
-const recipeCost = (recipe, ingredientsDb) => {
-  const items = recipe.items || [];
-  const rawCost = items.reduce((sum, it) => {
-    const ing = ingredientsDb.find((i) => i.id === it.ingredientId);
-    return sum + (ing ? ing.costPerUnit * (it.qty || 0) : 0);
-  }, 0);
-  const waste = recipe.wastePercent || 0;
-  const totalCost = rawCost * (1 + waste / 100);
-  const servings = recipe.servings || 1;
-  const costPerServing = totalCost / servings;
-  const sellPrice = recipe.sellPrice || 0;
-  const foodCostPct = sellPrice ? (costPerServing / sellPrice) * 100 : null;
-  const marginPerServing = sellPrice ? sellPrice - costPerServing : null;
-  return { rawCost, totalCost, costPerServing, foodCostPct, marginPerServing, hasItems: items.length > 0 };
-};
-
-function ComidasTab({ data, patch }) {
-  const [date, setDate] = useState(todayISO());
-  const [sub, setSub] = useState("comidas");
-  const [highlightRecipe, setHighlightRecipe] = useState(null);
-  const dayMeals = data.meals[date] || {};
-
-  const setMeal = (slot, field, value) => {
-    patch((d) => ({
-      meals: {
-        ...d.meals,
-        [date]: { ...(d.meals[date] || {}), [slot]: { ...((d.meals[date] || {})[slot] || {}), [field]: value } },
-      },
-    }));
-  };
-
-  const goToRecipe = (recipeId) => { setHighlightRecipe(recipeId); setSub("recetas"); };
-
-  return (
-    <div>
-      <div className="a-row" style={{ marginBottom: 4 }}>
-        <div>
-          <h1 className="a-h1 agenda-serif">Comidas</h1>
-          <p className="a-sub">Registra lo que comes, tus recetas y su costeo (food cost).</p>
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 8, margin: "0 0 16px", flexWrap: "wrap" }}>
-        <button className={`a-btn ${sub === "comidas" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setSub("comidas")}>Registro diario</button>
-        <button className={`a-btn ${sub === "recetas" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => { setHighlightRecipe(null); setSub("recetas"); }}>Recetas</button>
-        <button className={`a-btn ${sub === "insumos" ? "" : "secondary"}`} style={{ fontSize: 12 }} onClick={() => setSub("insumos")}>Insumos</button>
-      </div>
-
-      {sub === "comidas" && (
-        <div>
-          <input className="a-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 180, marginBottom: 16 }} />
-          <div className="a-grid a-grid-2">
-            {MEAL_SLOTS.map((slot) => {
-              const entry = dayMeals[slot.id] || {};
-              return (
-                <div className="a-card" key={slot.id}>
-                  <h3 style={{ marginTop: 0, fontSize: 14.5 }}>{slot.label}</h3>
-                  <select className="a-select" value={entry.recipeId || ""} style={{ marginBottom: 8 }}
-                    onChange={(e) => {
-                      const r = data.recipes.find((r) => r.id === e.target.value);
-                      setMeal(slot.id, "recipeId", e.target.value);
-                      if (r) setMeal(slot.id, "text", r.name);
-                    }}>
-                    <option value="">Sin receta vinculada</option>
-                    {data.recipes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select>
-                  <input className="a-input" placeholder="¿Qué comiste?" value={entry.text || ""} onChange={(e) => setMeal(slot.id, "text", e.target.value)} style={{ marginBottom: entry.recipeId ? 8 : 0 }} />
-                  {entry.recipeId && (
-                    <button className="a-btn secondary xs" onClick={() => goToRecipe(entry.recipeId)}><ChefHat size={12} /> Ver receta</button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {sub === "recetas" && (
-        <RecetasPanel data={data} patch={patch} highlightId={highlightRecipe}
-          onGoToMeal={(mealDate) => { setDate(mealDate); setSub("comidas"); }} />
-      )}
-
-      {sub === "insumos" && <InsumosPanel data={data} patch={patch} />}
-    </div>
-  );
-}
-
-function InsumosPanel({ data, patch }) {
-  const [name, setName] = useState("");
-  const [unit, setUnit] = useState("kg");
-  const [cost, setCost] = useState("");
-  const [editingId, setEditingId] = useState(null);
-
-  const addIngredient = () => {
-    const c = parseFloat(cost);
-    if (!name.trim() || !c) return;
-    patch((d) => ({ ingredientsDb: [...d.ingredientsDb, { id: uid(), name, unit, costPerUnit: c }] }));
-    setName(""); setCost("");
-  };
-  const delIngredient = (id) => {
-    if (!confirm("¿Eliminar este insumo? Las recetas que lo usan quedarán sin ese costo.")) return;
-    patch((d) => ({ ingredientsDb: d.ingredientsDb.filter((i) => i.id !== id) }));
-  };
-  const updateIngredient = (id, fields) => patch((d) => ({ ingredientsDb: d.ingredientsDb.map((i) => i.id === id ? { ...i, ...fields } : i) }));
-
-  return (
-    <div>
-      <div className="a-card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Nuevo insumo</h3>
-        <p className="a-sub">La unidad es la que uses para comprarlo (ej: kg de carne, litro de aceite, unidad de pan). El costo es por esa unidad.</p>
-        <div className="a-grid a-grid-3" style={{ marginBottom: 10 }}>
-          <input className="a-input" placeholder="Nombre (ej: Carne molida)" value={name} onChange={(e) => setName(e.target.value)} />
-          <select className="a-select" value={unit} onChange={(e) => setUnit(e.target.value)}>
-            <option value="kg">kg</option>
-            <option value="g">g</option>
-            <option value="l">l</option>
-            <option value="ml">ml</option>
-            <option value="unidad">unidad</option>
-          </select>
-          <input className="a-input" type="number" placeholder="Costo por unidad ($)" value={cost} onChange={(e) => setCost(e.target.value)} />
-        </div>
-        <button className="a-btn" onClick={addIngredient}><Plus size={14} /> Agregar insumo</button>
-      </div>
-
-      <div className="a-grid a-grid-2">
-        {data.ingredientsDb.map((ing) => (
-          <div className="a-card" key={ing.id}>
-            {editingId === ing.id ? (
-              <>
-                <input className="a-input" value={ing.name} onChange={(e) => updateIngredient(ing.id, { name: e.target.value })} style={{ marginBottom: 8 }} />
-                <div className="a-grid a-grid-2" style={{ marginBottom: 8 }}>
-                  <select className="a-select" value={ing.unit} onChange={(e) => updateIngredient(ing.id, { unit: e.target.value })}>
-                    <option value="kg">kg</option><option value="g">g</option><option value="l">l</option><option value="ml">ml</option><option value="unidad">unidad</option>
-                  </select>
-                  <input className="a-input" type="number" value={ing.costPerUnit} onChange={(e) => updateIngredient(ing.id, { costPerUnit: parseFloat(e.target.value) || 0 })} />
-                </div>
-                <button className="a-btn xs" onClick={() => setEditingId(null)}><Check size={12} /> Listo</button>
-              </>
-            ) : (
-              <div className="a-row">
-                <div>
-                  <div style={{ fontWeight: 600 }}>{ing.name}</div>
-                  <div className="a-sub agenda-mono" style={{ margin: 0 }}>{formatCLP(ing.costPerUnit)} / {ing.unit}</div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <Pencil size={14} color="var(--text-soft)" style={{ cursor: "pointer" }} onClick={() => setEditingId(ing.id)} />
-                  <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delIngredient(ing.id)} />
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-        {data.ingredientsDb.length === 0 && <p className="a-sub">Sin insumos todavía. Agrega el primero arriba — luego podrás usarlo en el costeo de tus recetas.</p>}
-      </div>
-    </div>
-  );
-}
-
-function RecetasPanel({ data, patch, highlightId, onGoToMeal }) {
-  const [name, setName] = useState("");
-  const [ingredients, setIngredients] = useState("");
-  const [steps, setSteps] = useState("");
-  const [link, setLink] = useState("");
-  const [showCosteo, setShowCosteo] = useState(false);
-  const [items, setItems] = useState([]); // {ingredientId, qty}
-  const [servings, setServings] = useState(1);
-  const [sellPrice, setSellPrice] = useState("");
-  const [wastePercent, setWastePercent] = useState(0);
-  const [editingId, setEditingId] = useState(null);
-
-  const resetForm = () => {
-    setName(""); setIngredients(""); setSteps(""); setLink("");
-    setItems([]); setServings(1); setSellPrice(""); setWastePercent(0); setShowCosteo(false);
-  };
-
-  const addRecipe = () => {
-    if (!name.trim()) return;
-    const recipe = {
-      id: uid(), name, ingredients, steps, link,
-      items: items.filter((it) => it.ingredientId && it.qty),
-      servings: parseInt(servings) || 1,
-      sellPrice: parseFloat(sellPrice) || 0,
-      wastePercent: parseFloat(wastePercent) || 0,
-    };
-    patch((d) => ({ recipes: [...d.recipes, recipe] }));
-    resetForm();
-  };
-  const delRecipe = (id) => patch((d) => ({ recipes: d.recipes.filter((r) => r.id !== id) }));
-
-  const addItemRow = () => setItems((it) => [...it, { ingredientId: data.ingredientsDb[0]?.id || "", qty: "" }]);
-  const updateItemRow = (idx, field, val) => setItems((it) => it.map((row, i) => i === idx ? { ...row, [field]: val } : row));
-  const delItemRow = (idx) => setItems((it) => it.filter((_, i) => i !== idx));
-
-  const liveCost = recipeCost({ items, servings, sellPrice: parseFloat(sellPrice) || 0, wastePercent: parseFloat(wastePercent) || 0 }, data.ingredientsDb);
-
-  const mealsUsingRecipe = (recipeId) => {
-    const usages = [];
-    Object.entries(data.meals || {}).forEach(([date, slots]) => {
-      Object.entries(slots || {}).forEach(([slotId, entry]) => {
-        if (entry?.recipeId === recipeId) {
-          const label = MEAL_SLOTS.find((s) => s.id === slotId)?.label || slotId;
-          usages.push({ date, label });
-        }
-      });
-    });
-    return usages.sort((a, b) => b.date.localeCompare(a.date));
-  };
-
-  return (
-    <div>
-      <div className="a-card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Nueva receta</h3>
-        <input className="a-input" placeholder="Nombre de la receta" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 8 }} />
-        <textarea className="a-input" rows={2} placeholder="Ingredientes (texto libre, para referencia)..." value={ingredients} onChange={(e) => setIngredients(e.target.value)} style={{ marginBottom: 8, fontFamily: "inherit" }} />
-        <textarea className="a-input" rows={2} placeholder="Preparación..." value={steps} onChange={(e) => setSteps(e.target.value)} style={{ marginBottom: 8, fontFamily: "inherit" }} />
-        <input className="a-input" placeholder="Link de la receta (opcional, ej: video o blog)" value={link} onChange={(e) => setLink(e.target.value)} style={{ marginBottom: 8 }} />
-
-        <button className="a-btn secondary xs" onClick={() => setShowCosteo((s) => !s)} style={{ marginBottom: showCosteo ? 12 : 0 }}>
-          {showCosteo ? "Ocultar costeo" : "+ Agregar costeo (food cost)"}
-        </button>
-
-        {showCosteo && (
-          <div style={{ background: "var(--bg)", borderRadius: 10, padding: 12, marginBottom: 8 }}>
-            {data.ingredientsDb.length === 0 && (
-              <p className="a-sub">Primero agrega insumos en la pestaña "Insumos" para poder costear esta receta.</p>
-            )}
-            {items.map((row, idx) => (
-              <div key={idx} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                <select className="a-select" value={row.ingredientId} onChange={(e) => updateItemRow(idx, "ingredientId", e.target.value)}>
-                  {data.ingredientsDb.map((ing) => <option key={ing.id} value={ing.id}>{ing.name} ({ing.unit})</option>)}
-                </select>
-                <input className="a-input" type="number" placeholder="Cantidad" style={{ maxWidth: 100 }} value={row.qty} onChange={(e) => updateItemRow(idx, "qty", parseFloat(e.target.value) || "")} />
-                <X size={16} color="var(--text-faint)" style={{ cursor: "pointer", flexShrink: 0 }} onClick={() => delItemRow(idx)} />
-              </div>
-            ))}
-            {data.ingredientsDb.length > 0 && (
-              <button className="a-btn secondary xs" onClick={addItemRow} style={{ marginBottom: 12 }}><Plus size={12} /> Agregar insumo a la receta</button>
-            )}
-
-            <div className="a-grid a-grid-3" style={{ marginBottom: 10 }}>
-              <div>
-                <div className="a-stat-label">Rinde (porciones)</div>
-                <input className="a-input" type="number" min={1} value={servings} onChange={(e) => setServings(e.target.value)} />
-              </div>
-              <div>
-                <div className="a-stat-label">Merma (%)</div>
-                <input className="a-input" type="number" min={0} value={wastePercent} onChange={(e) => setWastePercent(e.target.value)} />
-              </div>
-              <div>
-                <div className="a-stat-label">Precio de venta / porción</div>
-                <input className="a-input" type="number" placeholder="Opcional" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} />
-              </div>
-            </div>
-
-            {liveCost.hasItems && (
-              <div className="a-card" style={{ padding: 10, background: "#fff" }}>
-                <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Costo total (con merma)</span><span className="agenda-mono">{formatCLP(liveCost.totalCost)}</span></div>
-                <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Costo por porción</span><span className="agenda-mono">{formatCLP(liveCost.costPerServing)}</span></div>
-                {liveCost.foodCostPct !== null && (
-                  <>
-                    <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Food cost</span><span className="agenda-mono" style={{ color: liveCost.foodCostPct <= 33 ? "var(--sage)" : "var(--clay)" }}>{liveCost.foodCostPct.toFixed(1)}%</span></div>
-                    <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Margen por porción</span><span className="agenda-mono">{formatCLP(liveCost.marginPerServing)}</span></div>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        <button className="a-btn" onClick={addRecipe}><ChefHat size={14} /> Guardar receta</button>
-      </div>
-
-      <div className="a-grid a-grid-2">
-        {data.recipes.map((r) => {
-          const usages = mealsUsingRecipe(r.id);
-          const c = recipeCost(r, data.ingredientsDb);
-          return (
-            <div className="a-card" key={r.id} style={{ border: highlightId === r.id ? "2px solid var(--sage)" : "1px solid var(--line)" }}>
-              <div className="a-row"><div style={{ fontWeight: 600 }}>{r.name}</div>
-                <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delRecipe(r.id)} />
-              </div>
-              {r.ingredients && <div className="a-sub" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}><b>Ingredientes:</b> {r.ingredients}</div>}
-              {r.steps && <div className="a-sub" style={{ marginTop: 4, whiteSpace: "pre-wrap" }}><b>Preparación:</b> {r.steps}</div>}
-              {r.link && <div style={{ marginTop: 6 }}><a href={r.link} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, color: "var(--sage)" }}>Ver receta original ↗</a></div>}
-
-              {c.hasItems && (
-                <div style={{ marginTop: 10, background: "var(--bg-card-2)", borderRadius: 8, padding: 8 }}>
-                  <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Costo/porción ({r.servings || 1})</span><span className="agenda-mono" style={{ fontSize: 12.5 }}>{formatCLP(c.costPerServing)}</span></div>
-                  {c.foodCostPct !== null && (
-                    <div className="a-row"><span className="a-sub" style={{ margin: 0 }}>Food cost</span><span className="agenda-mono" style={{ fontSize: 12.5, color: c.foodCostPct <= 33 ? "var(--sage)" : "var(--clay)" }}>{c.foodCostPct.toFixed(1)}%</span></div>
-                  )}
-                </div>
-              )}
-
-              {usages.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div className="a-stat-label">Usada en Comidas</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
-                    {usages.map((u, i) => (
-                      <span key={i} className="a-pill chip" style={{ cursor: "pointer" }} onClick={() => onGoToMeal(u.date)}>{u.date} · {u.label}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ================= ENTRENAMIENTO ================= */
-function EntrenamientoTab({ data, patch }) {
-  const [date, setDate] = useState(todayISO());
-  const [type, setType] = useState("");
-  const [duration, setDuration] = useState("");
-  const [notes, setNotes] = useState("");
-
-  const addWorkout = () => {
-    if (!type.trim()) return;
-    patch((d) => ({ workouts: [{ id: uid(), date, type, duration: parseInt(duration) || 0, notes }, ...d.workouts] }));
-    setType(""); setDuration(""); setNotes("");
-  };
-  const delWorkout = (id) => patch((d) => ({ workouts: d.workouts.filter((w) => w.id !== id) }));
-
-  return (
-    <div>
-      <h1 className="a-h1 agenda-serif">Entrenamiento</h1>
-      <p className="a-sub">Registro de actividad física.</p>
-      <div className="a-card" style={{ marginBottom: 16 }}>
-        <div className="a-grid a-grid-3" style={{ marginBottom: 10 }}>
-          <input className="a-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          <input className="a-input" placeholder="Tipo (ej: Fuerza, Cardio)" value={type} onChange={(e) => setType(e.target.value)} />
-          <input className="a-input" type="number" placeholder="Duración (min)" value={duration} onChange={(e) => setDuration(e.target.value)} />
-        </div>
-        <input className="a-input" placeholder="Notas (opcional)" value={notes} onChange={(e) => setNotes(e.target.value)} style={{ marginBottom: 10 }} />
-        <button className="a-btn" onClick={addWorkout}><Dumbbell size={14} /> Registrar</button>
-      </div>
-      <div className="a-card">
-        {data.workouts.length === 0 && <p className="a-sub">Sin entrenamientos registrados.</p>}
-        {data.workouts.map((w) => (
-          <div className="a-list-item" key={w.id}>
-            <Dumbbell size={14} color="var(--text-soft)" />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13.5 }}>{w.type} · {w.duration} min</div>
-              <div className="a-sub" style={{ margin: 0, fontSize: 11.5 }}>{w.date}{w.notes ? ` · ${w.notes}` : ""}</div>
-            </div>
-            <Trash2 size={14} color="var(--text-faint)" style={{ cursor: "pointer" }} onClick={() => delWorkout(w.id)} />
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -2608,45 +1665,17 @@ function RecordatoriosTab({ data, patch }) {
   );
 }
 
-/* ================= EXPORTAR (planillas y respaldo) ================= */
-function ExportPanel({ data }) {
-  const exportTransactions = () => {
-    const rows = data.transactions.map((t) => ({
-      fecha: t.date, tipo: t.type, concepto: t.concept, categoria: t.category, monto: t.amount,
-    }));
-    downloadFile("finanzas-sanorganic.csv", toCSV(rows), "text/csv;charset=utf-8;");
-  };
-  const exportHabits = () => {
-    const rows = [];
-    data.habits.forEach((h) => {
-      const meta = h.mode === "weekly" ? h.targetCount : h.targetQty;
-      Object.entries(h.log).forEach(([date, qty]) => {
-        rows.push({ habito: h.name, modo: h.mode || "daily", fecha: date, cantidad: qty, meta, unidad: h.unit || "", cumplido: qty >= meta ? "sí" : "no" });
-      });
-    });
-    downloadFile("habitos-sanorganic.csv", toCSV(rows), "text/csv;charset=utf-8;");
-  };
-  const exportBackup = () => {
-    downloadFile("respaldo-agenda-sanorganic.json", JSON.stringify(data, null, 2), "application/json");
-  };
-
-  return (
-    <div className="a-card">
-      <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Exportar datos</h3>
-      <p className="a-sub">Descarga tus datos como planilla (Excel/Google Sheets puede abrir estos .csv directamente) o como respaldo completo.</p>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button className="a-btn secondary xs" onClick={exportTransactions}>Movimientos financieros (.csv)</button>
-        <button className="a-btn secondary xs" onClick={exportHabits}>Registro de hábitos (.csv)</button>
-        <button className="a-btn secondary xs" onClick={exportBackup}>Respaldo completo (.json)</button>
-      </div>
-    </div>
-  );
-}
-
 /* ================= AJUSTES (personalización y datos) ================= */
+const PALETTES = [
+  { id: "earthy", name: "Earthy Tones", swatches: ["#EDAFB8", "#F7E1D7", "#DEDBD2", "#B0C4B1", "#4A5759"], accent: "#B0C4B1", surface: "#DEDBD2", text: "#4A5759" },
+  { id: "golden", name: "Golden Peachy Glow", swatches: ["#C9CBA3", "#FFE1A8", "#E26D5C", "#723D46", "#472D30"], accent: "#E26D5C", surface: "#FFE1A8", text: "#472D30" },
+  { id: "retro", name: "Retro Vibes", swatches: ["#89023E", "#CC7178", "#FFD9DA", "#F3E1DD", "#C7D9B7"], accent: "#89023E", surface: "#F3E1DD", text: "#89023E" },
+];
+
 function AjustesTab({ data, patch, setData, session }) {
   const [wallpaperInput, setWallpaperInput] = useState(data.wallpaper || "");
   const fileInputRef = useRef(null);
+  const currentPalette = data.colorPalette || "earthy";
 
   const saveName = (name) => patch(() => ({ name }));
   const saveWallpaper = () => patch(() => ({ wallpaper: wallpaperInput.trim() }));
@@ -2671,7 +1700,7 @@ function AjustesTab({ data, patch, setData, session }) {
   };
 
   const resetAll = () => {
-    if (!confirm("Esto borra TODOS tus datos (hábitos, finanzas, notas, todo) y no se puede deshacer. ¿Seguro que quieres continuar?")) return;
+    if (!confirm("Esto borra TODOS tus datos (tareas, notas, agenda, todo) y no se puede deshacer. ¿Seguro que quieres continuar?")) return;
     setData(defaultData());
   };
 
@@ -2694,13 +1723,44 @@ function AjustesTab({ data, patch, setData, session }) {
       <div className="a-card" style={{ marginBottom: 16 }}>
         <div className="a-row">
           <div>
-            <h3 style={{ margin: 0, fontSize: 14.5 }}>Modo oscuro</h3>
-            <p className="a-sub" style={{ margin: "4px 0 0" }}>Cambia la paleta clara por una versión oscura, mismos tonos rosados.</p>
+            <h3 style={{ margin: 0, fontSize: 14.5, display: "flex", alignItems: "center", gap: 6 }}>
+              {data.darkMode ? <Moon size={15} /> : <Sun size={15} />} Modo oscuro
+            </h3>
+            <p className="a-sub" style={{ margin: "4px 0 0" }}>Cambia la versión clara de tu paleta por una versión oscura.</p>
           </div>
           <label className="a-switch">
             <input type="checkbox" checked={!!data.darkMode} onChange={(e) => patch(() => ({ darkMode: e.target.checked }))} />
             <span className="a-switch-track"><span className="a-switch-thumb" /></span>
           </label>
+        </div>
+      </div>
+
+      <div className="a-card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0, fontSize: 14.5 }}><Palette size={15} style={{ verticalAlign: -2 }} /> Paleta de colores</h3>
+        <p className="a-sub">Elige los tonos de toda la app. Se aplica al instante y se guarda en tu cuenta.</p>
+        <div className="a-palette-grid">
+          {PALETTES.map((p) => {
+            const active = currentPalette === p.id;
+            return (
+              <button
+                key={p.id}
+                className={`a-palette-option ${active ? "active" : ""}`}
+                onClick={() => patch(() => ({ colorPalette: p.id }))}
+                type="button"
+              >
+                <div className="a-row">
+                  <span className="a-palette-name">{active && <Check size={13} color="var(--sage)" />} {p.name}</span>
+                </div>
+                <div className="a-palette-swatches">
+                  {p.swatches.map((hex) => <span key={hex} className="a-palette-swatch" style={{ background: hex }} />)}
+                </div>
+                <div className="a-palette-preview" style={{ background: p.surface }}>
+                  <span className="a-palette-preview-btn" style={{ background: p.accent }}>Botón</span>
+                  <span className="a-palette-preview-card" style={{ background: "rgba(255,255,255,0.55)", color: p.text }}>Vista previa de card</span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -2735,55 +1795,3 @@ function AjustesTab({ data, patch, setData, session }) {
   );
 }
 
-/* ================= STATS ================= */
-function StatsTab({ data, month, monthTx }) {
-  const byCategory = {};
-  monthTx.filter((t) => t.type === "egreso").forEach((t) => { byCategory[t.category] = (byCategory[t.category] || 0) + t.amount; });
-  const totalEgresos = Object.values(byCategory).reduce((a, b) => a + b, 0) || 1;
-
-  const today = todayISO();
-  const weekStart = startOfWeek(today);
-  const habitStats = data.habits.map((h) => ({ h, wp: habitWeekProgress(h, today, weekStart) }));
-  const habitRate = habitStats.length ? habitStats.reduce((s, x) => s + x.wp.pct, 0) / habitStats.length : 0;
-
-  return (
-    <div>
-      <h1 className="a-h1 agenda-serif">Estadísticas</h1>
-      <p className="a-sub">Vista rápida de {monthLabel(month)}.</p>
-      <div className="a-card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginTop: 0, fontSize: 14.5 }}>Desglose de egresos por categoría</h3>
-        {Object.keys(byCategory).length === 0 && <p className="a-sub">Sin egresos registrados este mes.</p>}
-        {Object.entries(byCategory).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => (
-          <div key={cat} style={{ marginBottom: 10 }}>
-            <div className="a-row" style={{ marginBottom: 4 }}>
-              <span style={{ fontSize: 13 }}>{cat}</span>
-              <span className="agenda-mono" style={{ fontSize: 12.5 }}>{formatCLP(amt)}</span>
-            </div>
-            <div style={{ height: 6, background: "var(--line)", borderRadius: 4, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${(amt / totalEgresos) * 100}%`, background: "var(--clay)" }} />
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="a-card" style={{ marginBottom: 16 }}>
-        <div className="a-row" style={{ marginBottom: 12 }}>
-          <h3 style={{ margin: 0, fontSize: 14.5 }}>Cumplimiento de hábitos esta semana</h3>
-          <Ring pct={habitRate} size={54} color="var(--sage)" />
-        </div>
-        {habitStats.length === 0 && <p className="a-sub">Aún no tienes hábitos creados.</p>}
-        {habitStats.map(({ h, wp }) => (
-          <div key={h.id} style={{ marginBottom: 10 }}>
-            <div className="a-row" style={{ marginBottom: 4 }}>
-              <span style={{ fontSize: 13 }}>{h.emoji} {h.name}</span>
-              <span className="agenda-mono" style={{ fontSize: 12.5 }}>{wp.done}/{wp.required} · {Math.round(wp.pct * 100)}%</span>
-            </div>
-            <div style={{ height: 6, background: "var(--line)", borderRadius: 4, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${wp.pct * 100}%`, background: "var(--sage)" }} />
-            </div>
-          </div>
-        ))}
-      </div>
-      <ExportPanel data={data} />
-    </div>
-  );
-}
