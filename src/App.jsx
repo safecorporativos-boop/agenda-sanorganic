@@ -199,7 +199,7 @@ const GlobalStyle = () => (
       --text-faint: color-mix(in srgb, var(--p-text) 38%, var(--p-bg) 62%);
       font-family:'Inter',sans-serif;
       background:var(--bg); color:var(--text);
-      min-height:100vh; display:flex; border-radius:16px; overflow:hidden;
+      min-height:100vh; min-height:100dvh; display:flex; border-radius:16px; overflow:hidden;
       box-shadow: 0 24px 70px rgba(43,32,24,0.16);
       transition: background .25s ease, color .25s ease;
     }
@@ -433,7 +433,7 @@ const GlobalStyle = () => (
     .a-tag { font-size:10px; padding:2px 8px; border-radius:999px; background:rgba(0,0,0,0.08); }
 
     @media (max-width: 760px) {
-      .agenda-root { border-radius:0; }
+      .agenda-root { border-radius:0; height:100vh; height:100dvh; }
       .a-sidebar-desktop { display:none; }
       .a-bottombar { display:block; }
       .a-main { max-height:100vh; padding:18px 14px calc(88px + env(safe-area-inset-bottom, 0px)); }
